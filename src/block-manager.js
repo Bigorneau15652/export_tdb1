@@ -1,6 +1,5 @@
 import interact from 'interactjs';
 import { PageManager, MIN_BLOCK_SIZE } from './page-manager.js';
-import { clamp } from './utils.js';
 
 class BlockManager {
   constructor(store, containerEl) {
@@ -72,15 +71,6 @@ class BlockManager {
       .resizable({
         edges: { left: true, right: true, bottom: true, top: true },
         modifiers: [
-          interact.modifiers.aspectRatio({
-            ratio: 'preserve',
-            modifiers: [
-              interact.modifiers.restrictSize({
-                min: { width: MIN_BLOCK_SIZE, height: MIN_BLOCK_SIZE },
-                max: { width: dims.width, height: dims.height },
-              }),
-            ],
-          }),
           interact.modifiers.restrictSize({
             min: { width: MIN_BLOCK_SIZE, height: MIN_BLOCK_SIZE },
             max: { width: dims.width, height: dims.height },
@@ -89,6 +79,9 @@ class BlockManager {
         listeners: {
           start(event) {
             el.classList.add('resizing');
+            event.target.dataset.originalRatio = String(
+              self.store.findBlock(blockId)?.width / self.store.findBlock(blockId)?.height || 1
+            );
           },
           move(event) {
             const block = self.store.findBlock(blockId);
@@ -100,13 +93,18 @@ class BlockManager {
             let newY = block.y + (event.deltaRect.top || 0);
 
             if (event.shiftKey) {
-              const ratio = block.width / block.height;
-              if (Math.abs(event.deltaRect.right) > Math.abs(event.deltaRect.bottom)) {
+              const ratio = parseFloat(event.target.dataset.originalRatio) || (block.width / block.height);
+              const deltaW = Math.abs(event.deltaRect.right || 0) + Math.abs(event.deltaRect.left || 0);
+              const deltaH = Math.abs(event.deltaRect.bottom || 0) + Math.abs(event.deltaRect.top || 0);
+              if (deltaW >= deltaH) {
                 newHeight = newWidth / ratio;
               } else {
                 newWidth = newHeight * ratio;
               }
             }
+
+            newWidth = Math.max(MIN_BLOCK_SIZE, Math.min(newWidth, dims.width));
+            newHeight = Math.max(MIN_BLOCK_SIZE, Math.min(newHeight, dims.height));
 
             const constrained = self.pageManager.constrainToPage(
               blockId, newX, newY, newWidth, newHeight
@@ -128,6 +126,7 @@ class BlockManager {
           },
           end(event) {
             el.classList.remove('resizing');
+            delete event.target.dataset.originalRatio;
             self.store.saveDebounced();
           },
         },

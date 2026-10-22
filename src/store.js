@@ -193,6 +193,8 @@ class Store {
           columns: [],
           filters: [],
           sorts: [],
+          dynamicFilter: false,
+          dynamicFilterColumn: null,
           tableName: '',
           footerFunc: 'sum',
           footerLabel: 'Total',

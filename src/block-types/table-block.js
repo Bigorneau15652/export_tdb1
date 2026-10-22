@@ -1,5 +1,5 @@
 import { createEl, formatNumber, aggregate } from '../utils.js';
-import { fetchTableData, fetchLinkedTableData, getTableStructure, getLinkedTableColumns, listTables, getLinkedTableId } from '../grist-api.js';
+import { fetchTableData, fetchLinkedTableData, getTableStructure, listTables, getLinkedTableId, getCurrentRecord } from '../grist-api.js';
 
 const AGGREGATION_FUNCS = [
   { value: 'sum', label: 'Somme' },
@@ -9,13 +9,27 @@ const AGGREGATION_FUNCS = [
   { value: 'count', label: 'Nombre' },
 ];
 
+const FILTER_OPS = [
+  { value: 'eq', label: 'égal à' },
+  { value: 'neq', label: 'différent de' },
+  { value: 'gt', label: 'supérieur à' },
+  { value: 'gte', label: 'supérieur ou égal' },
+  { value: 'lt', label: 'inférieur à' },
+  { value: 'lte', label: 'inférieur ou égal' },
+  { value: 'contains', label: 'contient' },
+  { value: 'startswith', label: 'commence par' },
+  { value: 'endswith', label: 'finit par' },
+  { value: 'isempty', label: 'est vide' },
+  { value: 'isnotempty', label: 'n\'est pas vide' },
+];
+
 export async function renderTableBlock(block, container, store) {
   container.className = 'dc-block-content dc-table-block';
   container.innerHTML = '';
 
   const cfg = block.config;
 
-  if (!cfg.columns || cfg.columns.length === 0) {
+  if (!cfg.sourceTable || !cfg.columns || cfg.columns.length === 0) {
     container.appendChild(createEl('div', 'dc-block-placeholder', '⚙️ Configurez le tableau : choisissez une table et cochez les colonnes'));
     return { update: async () => {}, destroy() {} };
   }
@@ -79,7 +93,23 @@ export async function renderTableBlock(block, container, store) {
       return;
     }
 
-    const records = currentData.records;
+    let records = currentData.records;
+
+    if (cfg.dynamicFilter && cfg.dynamicFilterColumn && store.currentRecord) {
+      const currentRec = store.currentRecord;
+      const currentVal = currentRec.fields?.[cfg.dynamicFilterColumn] || currentRec[cfg.dynamicFilterColumn];
+      if (currentVal !== undefined && currentVal !== null) {
+        const beforeCount = records.length;
+        records = records.filter(r => {
+          const val = r.fields[cfg.dynamicFilterColumn];
+          if (Array.isArray(val)) {
+            return val.some(v => String(v) === String(currentVal));
+          }
+          return String(val) === String(currentVal);
+        });
+        console.log(`[table-block] Dynamic filter on ${cfg.dynamicFilterColumn}=${currentVal}: ${beforeCount} → ${records.length} records`);
+      }
+    }
 
     for (const rec of records) {
       const row = createEl('tr', 'dc-tr');
@@ -162,7 +192,7 @@ export async function createTableEditor(block, onChange, store) {
   const nameLabel = createEl('label', 'dc-label', 'Nom du tableau (titre affiché au-dessus)');
   const nameInput = createEl('input', 'dc-input dc-input-full');
   nameInput.type = 'text';
-  nameInput.placeholder = 'Ex: Surfaces par niveau';
+  nameInput.placeholder = 'Ex: Surfaces par étage';
   nameInput.value = cfg.tableName || '';
   nameInput.addEventListener('input', () => onChange({ tableName: nameInput.value }));
   editor.appendChild(nameLabel);
@@ -178,6 +208,222 @@ export async function createTableEditor(block, onChange, store) {
 
   const columnsContainer = createEl('div', 'dc-columns-selector');
   editor.appendChild(columnsContainer);
+
+  const dynamicSection = createEl('div', 'dc-dynamic-section');
+  dynamicSection.style.cssText = 'margin-top:16px;padding:12px;border:1px solid #c3dafe;background:#ebf5ff;border-radius:6px;';
+
+  const dynamicTitle = createEl('div', 'dc-section-title', '🔗 Liaison dynamique avec la ligne Grist active');
+  dynamicTitle.style.cssText = 'font-weight:bold;margin-bottom:8px;color:#2b6cb0;';
+  dynamicSection.appendChild(dynamicTitle);
+
+  const dynamicHint = createEl('p', 'dc-hint', 'Le tableau ne montrera que les lignes liées au bâtiment/site sélectionné dans Grist.');
+  dynamicHint.style.cssText = 'font-size:12px;color:#4a5568;margin-bottom:8px;';
+  dynamicSection.appendChild(dynamicHint);
+
+  const currentRecord = getCurrentRecord();
+  if (currentRecord) {
+    const recordInfo = createEl('p', 'dc-hint', `📍 Ligne active : ID ${currentRecord.id}`);
+    recordInfo.style.cssText = 'font-size:12px;color:#2b6cb0;background:#bee3f8;padding:4px 8px;border-radius:4px;margin-bottom:8px;';
+    dynamicSection.appendChild(recordInfo);
+  }
+
+  const dynamicEnabledLabel = createEl('label', 'dc-checkbox-label');
+  const dynamicEnabledCb = createEl('input');
+  dynamicEnabledCb.type = 'checkbox';
+  dynamicEnabledCb.checked = cfg.dynamicFilter || false;
+  dynamicEnabledCb.addEventListener('change', () => {
+    onChange({ dynamicFilter: dynamicEnabledCb.checked });
+    updateDynamicVisibility();
+  });
+  dynamicEnabledLabel.appendChild(dynamicEnabledCb);
+  dynamicEnabledLabel.appendChild(createEl('span', '', ' Activer le filtre dynamique (lié à la ligne active)'));
+  dynamicSection.appendChild(dynamicEnabledLabel);
+
+  const dynamicConfig = createEl('div', 'dc-dynamic-config');
+  dynamicConfig.style.cssText = 'margin-left:20px;margin-top:8px;';
+
+  const dynamicColLabel = createEl('label', 'dc-label', 'Colonne de liaison (ex: Batiment, Site...)');
+  const dynamicColSelect = createEl('select', 'dc-select dc-select-full');
+  dynamicColSelect.appendChild(createEl('option', '', '— Choisir la colonne de liaison —'));
+  dynamicColSelect.addEventListener('change', () => {
+    onChange({ dynamicFilterColumn: dynamicColSelect.value || null });
+  });
+
+  dynamicConfig.appendChild(dynamicColLabel);
+  dynamicConfig.appendChild(dynamicColSelect);
+  dynamicSection.appendChild(dynamicConfig);
+
+  function updateDynamicVisibility() {
+    dynamicConfig.style.display = dynamicEnabledCb.checked ? 'block' : 'none';
+  }
+  updateDynamicVisibility();
+
+  editor.appendChild(dynamicSection);
+
+  const filterSection = createEl('div', 'dc-filter-section');
+  filterSection.style.cssText = 'margin-top:16px;padding-top:12px;border-top:1px solid #ddd;';
+
+  const filterTitle = createEl('div', 'dc-section-title', '🔍 Filtres (optionnels)');
+  filterTitle.style.cssText = 'font-weight:bold;margin-bottom:8px;';
+  filterSection.appendChild(filterTitle);
+
+  const filtersContainer = createEl('div', 'dc-filters-container');
+  filterSection.appendChild(filtersContainer);
+
+  const addFilterBtn = createEl('button', 'dc-btn dc-btn-small', '+ Ajouter un filtre');
+  addFilterBtn.style.cssText = 'margin-top:8px;padding:4px 12px;font-size:12px;';
+  filterSection.appendChild(addFilterBtn);
+
+  function renderFilters() {
+    filtersContainer.innerHTML = '';
+    const filters = cfg.filters || [];
+    if (filters.length === 0) {
+      filtersContainer.appendChild(createEl('p', 'dc-hint', 'Aucun filtre. Toutes les lignes seront affichées.'));
+      return;
+    }
+    filters.forEach((filter, idx) => {
+      const row = createEl('div', 'dc-filter-row');
+      row.style.cssText = 'display:flex;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap;';
+
+      const colSel = createEl('select', 'dc-select');
+      colSel.appendChild(createEl('option', '', '— Colonne —'));
+      availableColumns.forEach(col => {
+        const opt = createEl('option', '', col.label || col.id);
+        opt.value = col.id;
+        colSel.appendChild(opt);
+      });
+      colSel.value = filter.column || '';
+      colSel.addEventListener('change', () => {
+        const newFilters = [...(cfg.filters || [])];
+        newFilters[idx] = { ...newFilters[idx], column: colSel.value || null };
+        onChange({ filters: newFilters });
+      });
+
+      const opSel = createEl('select', 'dc-select');
+      FILTER_OPS.forEach(op => {
+        const opt = createEl('option', '', op.label);
+        opt.value = op.value;
+        opSel.appendChild(opt);
+      });
+      opSel.value = filter.op || 'eq';
+      opSel.addEventListener('change', () => {
+        const newFilters = [...(cfg.filters || [])];
+        newFilters[idx] = { ...newFilters[idx], op: opSel.value };
+        onChange({ filters: newFilters });
+      });
+
+      const valInput = createEl('input', 'dc-input');
+      valInput.type = 'text';
+      valInput.placeholder = 'Valeur';
+      valInput.value = filter.value || '';
+      valInput.style.cssText = 'width:120px;';
+      const isEmptyOp = ['isempty', 'isnotempty'].includes(filter.op);
+      valInput.style.display = isEmptyOp ? 'none' : 'inline-block';
+      valInput.addEventListener('input', () => {
+        const newFilters = [...(cfg.filters || [])];
+        newFilters[idx] = { ...newFilters[idx], value: valInput.value };
+        onChange({ filters: newFilters });
+      });
+
+      opSel.addEventListener('change', () => {
+        valInput.style.display = ['isempty', 'isnotempty'].includes(opSel.value) ? 'none' : 'inline-block';
+      });
+
+      const removeBtn = createEl('button', 'dc-btn dc-btn-danger dc-btn-small', '✕');
+      removeBtn.style.cssText = 'padding:2px 8px;font-size:12px;';
+      removeBtn.addEventListener('click', () => {
+        const newFilters = (cfg.filters || []).filter((_, i) => i !== idx);
+        onChange({ filters: newFilters });
+        renderFilters();
+      });
+
+      row.appendChild(colSel);
+      row.appendChild(opSel);
+      row.appendChild(valInput);
+      row.appendChild(removeBtn);
+      filtersContainer.appendChild(row);
+    });
+  }
+
+  addFilterBtn.addEventListener('click', () => {
+    const newFilters = [...(cfg.filters || []), { column: null, op: 'eq', value: '' }];
+    onChange({ filters: newFilters });
+    renderFilters();
+  });
+
+  editor.appendChild(filterSection);
+
+  const sortSection = createEl('div', 'dc-sort-section');
+  sortSection.style.cssText = 'margin-top:16px;padding-top:12px;border-top:1px solid #ddd;';
+
+  const sortTitle = createEl('div', 'dc-section-title', '↕️ Tris (optionnels)');
+  sortTitle.style.cssText = 'font-weight:bold;margin-bottom:8px;';
+  sortSection.appendChild(sortTitle);
+
+  const sortsContainer = createEl('div', 'dc-sorts-container');
+  sortSection.appendChild(sortsContainer);
+
+  const addSortBtn = createEl('button', 'dc-btn dc-btn-small', '+ Ajouter un tri');
+  addSortBtn.style.cssText = 'margin-top:8px;padding:4px 12px;font-size:12px;';
+  sortSection.appendChild(addSortBtn);
+
+  function renderSorts() {
+    sortsContainer.innerHTML = '';
+    const sorts = cfg.sorts || [];
+    if (sorts.length === 0) {
+      sortsContainer.appendChild(createEl('p', 'dc-hint', 'Aucun tri. Ordre original de la table.'));
+      return;
+    }
+    sorts.forEach((sort, idx) => {
+      const row = createEl('div', 'dc-sort-row');
+      row.style.cssText = 'display:flex;gap:6px;align-items:center;margin-bottom:6px;';
+
+      const colSel = createEl('select', 'dc-select');
+      colSel.appendChild(createEl('option', '', '— Colonne —'));
+      availableColumns.forEach(col => {
+        const opt = createEl('option', '', col.label || col.id);
+        opt.value = col.id;
+        colSel.appendChild(opt);
+      });
+      colSel.value = sort.column || '';
+      colSel.addEventListener('change', () => {
+        const newSorts = [...(cfg.sorts || [])];
+        newSorts[idx] = { ...newSorts[idx], column: colSel.value || null };
+        onChange({ sorts: newSorts });
+      });
+
+      const dirSel = createEl('select', 'dc-select');
+      dirSel.appendChild(createEl('option', '↑ Croissant', 'asc'));
+      dirSel.appendChild(createEl('option', '↓ Décroissant', 'desc'));
+      dirSel.value = sort.dir || 'asc';
+      dirSel.addEventListener('change', () => {
+        const newSorts = [...(cfg.sorts || [])];
+        newSorts[idx] = { ...newSorts[idx], dir: dirSel.value };
+        onChange({ sorts: newSorts });
+      });
+
+      const removeBtn = createEl('button', 'dc-btn dc-btn-danger dc-btn-small', '✕');
+      removeBtn.style.cssText = 'padding:2px 8px;font-size:12px;';
+      removeBtn.addEventListener('click', () => {
+        const newSorts = (cfg.sorts || []).filter((_, i) => i !== idx);
+        onChange({ sorts: newSorts });
+        renderSorts();
+      });
+
+      row.appendChild(colSel);
+      row.appendChild(dirSel);
+      row.appendChild(removeBtn);
+      sortsContainer.appendChild(row);
+    });
+  }
+
+  addSortBtn.addEventListener('click', () => {
+    const newSorts = [...(cfg.sorts || []), { column: null, dir: 'asc' }];
+    onChange({ sorts: newSorts });
+    renderSorts();
+  });
+
+  editor.appendChild(sortSection);
 
   const footerSection = createEl('div', 'dc-footer-section');
   footerSection.style.cssText = 'margin-top:16px;padding-top:12px;border-top:1px solid #ddd;';
@@ -265,7 +511,7 @@ export async function createTableEditor(block, onChange, store) {
     tableSelect.appendChild(createEl('option', '', '⏳ Chargement des tables...'));
 
     const tables = await listTables();
-    console.log('[table-block] Tables loaded:', tables.length, tables);
+    console.log('[table-block] Tables loaded:', tables.length);
 
     tableSelect.innerHTML = '';
     tableSelect.appendChild(createEl('option', '', '— Choisir une table —'));
@@ -288,7 +534,7 @@ export async function createTableEditor(block, onChange, store) {
     } else if (tables.length > 0) {
       columnsContainer.appendChild(createEl('p', 'dc-hint', '⬆️ Sélectionnez une table pour voir ses colonnes'));
     } else {
-      columnsContainer.appendChild(createEl('p', 'dc-hint dc-hint-error', '⚠️ Aucune table trouvée. Vérifiez les permissions du widget.'));
+      columnsContainer.appendChild(createEl('p', 'dc-hint dc-hint-error', '⚠️ Aucune table trouvée.'));
     }
   }
 
@@ -299,6 +545,17 @@ export async function createTableEditor(block, onChange, store) {
     availableColumns = await getTableStructure(tableId);
     console.log('[table-block] Columns:', availableColumns.length, availableColumns.map(c => c.id));
 
+    dynamicColSelect.innerHTML = '';
+    dynamicColSelect.appendChild(createEl('option', '', '— Choisir la colonne de liaison —'));
+    availableColumns.forEach(col => {
+      const opt = createEl('option', '', `${col.label || col.id} (${col.type})`);
+      opt.value = col.id;
+      dynamicColSelect.appendChild(opt);
+    });
+    dynamicColSelect.value = cfg.dynamicFilterColumn || '';
+
+    renderFilters();
+    renderSorts();
     renderColumns();
   }
 
@@ -306,8 +563,7 @@ export async function createTableEditor(block, onChange, store) {
     columnsContainer.innerHTML = '';
 
     if (availableColumns.length === 0) {
-      columnsContainer.appendChild(createEl('p', 'dc-hint dc-hint-error',
-        '⚠️ Aucune colonne trouvée pour cette table. Vérifiez la console (F12) pour les logs [grist-api]'));
+      columnsContainer.appendChild(createEl('p', 'dc-hint dc-hint-error', '⚠️ Aucune colonne trouvée pour cette table.'));
       return;
     }
 
@@ -338,10 +594,10 @@ export async function createTableEditor(block, onChange, store) {
       availableColumns = [];
       columnsContainer.innerHTML = '';
       columnsContainer.appendChild(createEl('p', 'dc-hint', '⬆️ Sélectionnez une table pour voir ses colonnes'));
-      onChange({ sourceTable: null, columns: [] });
+      onChange({ sourceTable: null, columns: [], filters: [], sorts: [] });
       return;
     }
-    onChange({ sourceTable: tid, useLinkedTable: false, columns: [] });
+    onChange({ sourceTable: tid, useLinkedTable: false, columns: [], filters: [], sorts: [] });
     await loadColumns(tid);
   });
 
