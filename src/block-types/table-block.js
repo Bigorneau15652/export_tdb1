@@ -266,13 +266,23 @@ export async function createTableEditor(block, onChange, store) {
     });
   }
 
-  tableSelect.addEventListener('change', () => {
+  tableSelect.addEventListener('change', async () => {
     onChange({ sourceTable: tableSelect.value, columns: [] });
-    loadColumns(tableSelect.value);
+    if (tableSelect.value) {
+      columnsContainer.innerHTML = '';
+      columnsContainer.appendChild(createEl('p', 'dc-hint', 'Chargement des colonnes...'));
+      await loadColumns(tableSelect.value);
+    }
   });
 
   if (cfg.sourceTable) {
+    columnsContainer.innerHTML = '';
+    columnsContainer.appendChild(createEl('p', 'dc-hint', 'Chargement des colonnes...'));
     await loadColumns(cfg.sourceTable);
+  } else if (selectedTableId && tables.includes(selectedTableId)) {
+    columnsContainer.innerHTML = '';
+    columnsContainer.appendChild(createEl('p', 'dc-hint', 'Chargement des colonnes...'));
+    await loadColumns(selectedTableId);
   } else {
     renderColumnCheckboxes();
   }

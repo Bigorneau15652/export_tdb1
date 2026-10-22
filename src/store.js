@@ -52,7 +52,8 @@ class Store {
 
   async init() {
     const options = await getOptions();
-    if (options[OPTION_KEY]) {
+    console.log('[store] init options:', options, typeof options);
+    if (options && options[OPTION_KEY]) {
       try {
         const saved = typeof options[OPTION_KEY] === 'string'
           ? JSON.parse(options[OPTION_KEY])

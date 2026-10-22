@@ -46,10 +46,17 @@ export async function initGrist() {
   _isReady = true;
   console.log('[grist-api] Grist widget ready');
 
-  g.onRecord((record, mappings) => {
+  g.onRecord(async (record, mappings) => {
+    console.log('[grist-api] onRecord received:', record ? 'record present' : 'null', 'mappings:', mappings);
     _currentRecord = record;
     _currentMappings = mappings;
-    if (_recordCallback) _recordCallback(record, mappings);
+    if (_recordCallback) {
+      try {
+        await _recordCallback(record, mappings);
+      } catch (e) {
+        console.error('[grist-api] record callback error:', e);
+      }
+    }
   });
 
   g.onOptions((options) => {
@@ -80,9 +87,14 @@ export function isGristReady() {
 }
 
 export async function getOptions() {
-  if (!getGrist()) return {};
+  const g = getGrist();
+  if (!g) return {};
   try {
-    return await getGrist().getOptions();
+    const opts = await g.getOptions();
+    console.log('[grist-api] getOptions result:', opts, typeof opts);
+    if (opts === null || opts === undefined) return {};
+    if (typeof opts !== 'object') return {};
+    return opts;
   } catch (e) {
     console.error('[grist-api] getOptions error:', e);
     return {};
@@ -160,19 +172,75 @@ export async function getTableStructure(tableId) {
 }
 
 export async function getSelectedTableId() {
-  if (!getGrist()) return null;
+  const g = getGrist();
+  if (!g) return null;
   try {
-    if (getGrist().selectedTable) return getGrist().selectedTable;
-    if (getGrist().viewApi && getGrist().viewApi.getSelectedTable) {
-      return await getGrist().viewApi.getSelectedTable();
+    console.log('[grist-api] getSelectedTableId: checking sources...');
+    console.log('[grist-api] g.selectedTable:', g.selectedTable, typeof g.selectedTable);
+
+    if (g.selectedTable) {
+      if (typeof g.selectedTable === 'string') {
+        console.log('[grist-api] selectedTable is string:', g.selectedTable);
+        return g.selectedTable;
+      }
+      if (g.selectedTable.tableId) {
+        console.log('[grist-api] selectedTable.tableId:', g.selectedTable.tableId);
+        return g.selectedTable.tableId;
+      }
+      if (g.selectedTable._tableId) {
+        console.log('[grist-api] selectedTable._tableId:', g.selectedTable._tableId);
+        return g.selectedTable._tableId;
+      }
+      console.log('[grist-api] selectedTable keys:', Object.keys(g.selectedTable));
+      console.log('[grist-api] selectedTable toString:', String(g.selectedTable));
     }
-    if (getGrist().raw && getGrist().raw.selectedTable) return getGrist().raw.selectedTable;
-    if (getGrist().sectionApi && getGrist().sectionApi.getSelectedTable) {
-      return await getGrist().sectionApi.getSelectedTable();
+
+    if (g.viewApi && g.viewApi.getSelectedTable) {
+      const t = await g.viewApi.getSelectedTable();
+      console.log('[grist-api] viewApi.getSelectedTable():', t);
+      if (t) return typeof t === 'string' ? t : (t.tableId || t._tableId || String(t));
     }
+
+    if (g.sectionApi && g.sectionApi.getSelectedTable) {
+      const t = await g.sectionApi.getSelectedTable();
+      console.log('[grist-api] sectionApi.getSelectedTable():', t);
+      if (t) return typeof t === 'string' ? t : (t.tableId || t._tableId || String(t));
+    }
+
+    if (g.getTable) {
+      try {
+        const table = await g.getTable();
+        console.log('[grist-api] getTable():', table);
+        if (table) {
+          if (typeof table === 'string') return table;
+          if (table.tableId) return table.tableId;
+          if (table.id) return table.id;
+        }
+      } catch (e) {
+        console.log('[grist-api] getTable() error:', e.message);
+      }
+    }
+
+    if (g.raw) {
+      console.log('[grist-api] g.raw keys:', Object.keys(g.raw));
+      if (g.raw.selectedTable) {
+        const t = g.raw.selectedTable;
+        return typeof t === 'string' ? t : (t.tableId || t._tableId || String(t));
+      }
+    }
+
+    try {
+      const tables = await g.docApi.listTables();
+      if (tables && tables.length === 1) {
+        console.log('[grist-api] Only one table, using it:', tables[0]);
+        return tables[0];
+      }
+    } catch (e) {}
+
   } catch (e) {
     console.error('[grist-api] getSelectedTableId error:', e);
   }
+  console.log('[grist-api] getSelectedTableId: returning null');
   return null;
 }
 
