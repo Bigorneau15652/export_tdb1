@@ -338,27 +338,9 @@ export async function createChartEditor(block, onChange, store) {
       renderColumnSelectors();
       return;
     }
+    console.log('[chart-block] loadColumns for:', tableId);
     availableColumns = await getTableStructure(tableId);
-    if (availableColumns.length === 0) {
-      try {
-        const data = await fetchTableData(tableId, { limit: 1 });
-        if (data.fields) {
-          availableColumns = Object.entries(data.fields).map(([id, field]) => ({
-            id,
-            label: field.label || id,
-            type: field.type || 'Any',
-          }));
-        } else if (data.records && data.records.length > 0) {
-          availableColumns = Object.keys(data.records[0].fields).map(id => ({
-            id,
-            label: id,
-            type: 'Any',
-          }));
-        }
-      } catch (e) {
-        console.error('[chart-block] loadColumns fallback error:', e);
-      }
-    }
+    console.log('[chart-block] Final columns:', availableColumns.length);
     renderColumnSelectors();
   }
 

@@ -99,17 +99,8 @@ export async function createTextEditor(block, onChange, store) {
     colSelect.innerHTML = '';
     colSelect.appendChild(createEl('option', '', '— Choisir une colonne —'));
     if (!tableId) return;
-    let columns = await getTableStructure(tableId);
-    if (columns.length === 0) {
-      try {
-        const data = await fetchTableData(tableId, { limit: 1 });
-        if (data.fields) {
-          columns = Object.entries(data.fields).map(([id, field]) => ({
-            id, label: field.label || id, type: field.type || 'Any',
-          }));
-        }
-      } catch (e) {}
-    }
+    const columns = await getTableStructure(tableId);
+    console.log('[text-block] loadColumns:', columns.length, 'columns');
     columns.forEach(col => {
       const opt = createEl('option', '', `${col.label || col.id} (${col.type})`);
       opt.value = col.id;

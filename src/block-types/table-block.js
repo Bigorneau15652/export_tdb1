@@ -229,42 +229,18 @@ export async function createTableEditor(block, onChange, store) {
     }
     console.log('[table-block] loadColumns for:', tableId);
     availableColumns = await getTableStructure(tableId);
-    console.log('[table-block] getTableStructure returned:', availableColumns.length, 'columns');
-    if (availableColumns.length === 0) {
-      console.log('[table-block] Trying fetchTableData fallback...');
-      try {
-        const data = await fetchTableData(tableId, { limit: 1 });
-        console.log('[table-block] fetchTableData result:', data);
-        if (data.fields && Object.keys(data.fields).length > 0) {
-          availableColumns = Object.entries(data.fields).map(([id, field]) => ({
-            id,
-            label: field.label || id,
-            type: field.type || 'Any',
-          }));
-          console.log('[table-block] Columns from fields:', availableColumns.length);
-        } else if (data.records && data.records.length > 0) {
-          availableColumns = Object.keys(data.records[0].fields).map(id => ({
-            id,
-            label: id,
-            type: 'Any',
-          }));
-          console.log('[table-block] Columns from record:', availableColumns.length);
-        }
-      } catch (e) {
-        console.error('[table-block] loadColumns fallback error:', e);
-      }
-    }
-    console.log('[table-block] Final columns:', availableColumns);
+    console.log('[table-block] Final columns:', availableColumns.length, availableColumns.map(c => c.id));
     renderColumnCheckboxes();
   }
 
   function renderColumnCheckboxes() {
     columnsContainer.innerHTML = '';
     if (availableColumns.length === 0) {
-      const msg = tableSelect.value
-        ? 'Aucune colonne trouvée pour cette table. Vérifiez la console (F12) pour les détails.'
-        : 'Choisissez d\'abord une table';
-      columnsContainer.appendChild(createEl('p', 'dc-hint', msg));
+      if (!tableSelect.value) {
+        columnsContainer.appendChild(createEl('p', 'dc-hint', '⬆️ Sélectionnez une table ci-dessus pour voir ses colonnes'));
+      } else {
+        columnsContainer.appendChild(createEl('p', 'dc-hint', '⚠️ Aucune colonne trouvée. Ouvrez la console (F12) et cherchez "[grist-api] getTableStructure" pour diagnostiquer.'));
+      }
       return;
     }
     availableColumns.forEach(col => {
