@@ -288,10 +288,16 @@ export async function createChartEditor(block, onChange, store) {
 
   let tables = await listTables();
   const selectedTableId = await getSelectedTableId();
+  const isGristContext = typeof grist !== 'undefined';
 
   if ((!tables || tables.length === 0) && selectedTableId) {
     tables = [selectedTableId];
   }
+
+  const debugInfo = createEl('div', 'dc-debug-info');
+  debugInfo.style.cssText = 'font-size:11px;color:#888;background:#f5f5f5;padding:6px;border-radius:4px;margin-bottom:8px;font-family:monospace;';
+  debugInfo.textContent = `Debug: Grist=${isGristContext}, Tables=${tables ? tables.length : 'null'} [${(tables || []).join(', ')}], Selected=${selectedTableId || 'none'}`;
+  editor.appendChild(debugInfo);
 
   const tableLabel = createEl('label', 'dc-label', 'Table source');
   const tableSelect = createEl('select', 'dc-select dc-select-full');

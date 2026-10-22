@@ -252,6 +252,18 @@ async function init() {
     try {
       let tables = await listTables();
       const selectedTableId = await getSelectedTableId();
+      const accessInfo = await grist.getAccessToken ? 'has-token-api' : 'no-token-api';
+
+      console.log('[dashboard-composer] === DEBUG INFO ===');
+      console.log('[dashboard-composer] grist object keys:', Object.keys(grist));
+      console.log('[dashboard-composer] grist.docApi:', !!grist.docApi);
+      console.log('[dashboard-composer] grist.selectedTable:', grist.selectedTable);
+      console.log('[dashboard-composer] grist.raw:', !!grist.raw);
+      console.log('[dashboard-composer] grist.viewApi:', !!grist.viewApi);
+      console.log('[dashboard-composer] grist.sectionApi:', !!grist.sectionApi);
+      console.log('[dashboard-composer] listTables result:', tables);
+      console.log('[dashboard-composer] selectedTableId:', selectedTableId);
+      console.log('[dashboard-composer] access:', accessInfo);
 
       if (selectedTableId) {
         store.setSelectedTableId(selectedTableId);
@@ -261,15 +273,28 @@ async function init() {
         }
         try {
           const structure = await getTableStructure(selectedTableId);
+          console.log('[dashboard-composer] selected table structure:', structure);
           store.setTableStructure(selectedTableId, structure);
         } catch (e) {
           console.error('[index] Error loading selected table structure:', e);
         }
       }
 
+      if ((!tables || tables.length === 0) && grist.docApi) {
+        try {
+          const sqlResult = await grist.docApi.executeSQL({
+            sql: 'SELECT id FROM _grist_Tables ORDER BY id'
+          });
+          tables = sqlResult.records.map(r => r.fields.id);
+          console.log('[dashboard-composer] Tables from SQL:', tables);
+        } catch (e) {
+          console.error('[dashboard-composer] SQL listTables fallback error:', e);
+        }
+      }
+
       store.setTables(tables || []);
-      console.log('[dashboard-composer] Tables loaded:', tables);
-      console.log('[dashboard-composer] Selected table:', selectedTableId);
+      console.log('[dashboard-composer] Final tables list:', tables);
+      console.log('[dashboard-composer] === END DEBUG ===');
     } catch (e) {
       console.error('[dashboard-composer] Error loading tables:', e);
     }
