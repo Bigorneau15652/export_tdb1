@@ -55,7 +55,7 @@ export function createEditorPanel(block, store, onClose) {
     let editorEl;
     switch (block.type) {
       case 'text':
-        editorEl = createTextEditor(block, onChange);
+        editorEl = await createTextEditor(block, onChange, store);
         break;
       case 'table':
         editorEl = await createTableEditor(block, onChange, store);

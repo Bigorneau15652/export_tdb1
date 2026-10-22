@@ -1,5 +1,5 @@
 import { createEl, formatNumber, aggregate } from '../utils.js';
-import { fetchTableData, getTableStructure, listTables } from '../grist-api.js';
+import { fetchTableData, getTableStructure, listTables, getSelectedTableId, getSelectedTableColumns } from '../grist-api.js';
 
 const AGGREGATION_FUNCS = [
   { value: 'sum', label: 'Somme' },
@@ -169,7 +169,19 @@ export async function createTableEditor(block, onChange, store) {
   const editor = createEl('div', 'dc-block-editor dc-table-editor');
   const cfg = block.config;
 
-  const tables = await listTables();
+  let tables = await listTables();
+  const selectedTableId = await getSelectedTableId();
+
+  if ((!tables || tables.length === 0) && selectedTableId) {
+    tables = [selectedTableId];
+  }
+
+  if (!tables || tables.length === 0) {
+    const noTablesMsg = createEl('p', 'dc-hint', 'Aucune table trouvée. Vérifiez que le widget a accès au document.');
+    editor.appendChild(noTablesMsg);
+    return editor;
+  }
+
   const tableSelect = createEl('select', 'dc-select dc-select-full');
   tableSelect.appendChild(createEl('option', '', '— Choisir une table —'));
   tables.forEach(t => {
@@ -177,6 +189,11 @@ export async function createTableEditor(block, onChange, store) {
     opt.value = t;
     tableSelect.appendChild(opt);
   });
+
+  if (!cfg.sourceTable && selectedTableId && tables.includes(selectedTableId)) {
+    cfg.sourceTable = selectedTableId;
+    onChange({ sourceTable: selectedTableId });
+  }
   tableSelect.value = cfg.sourceTable || '';
 
   const nameInput = createEl('input', 'dc-input dc-input-full');
@@ -195,6 +212,26 @@ export async function createTableEditor(block, onChange, store) {
       return;
     }
     availableColumns = await getTableStructure(tableId);
+    if (availableColumns.length === 0) {
+      try {
+        const data = await fetchTableData(tableId, { limit: 1 });
+        if (data.fields) {
+          availableColumns = Object.entries(data.fields).map(([id, field]) => ({
+            id,
+            label: field.label || id,
+            type: field.type || 'Any',
+          }));
+        } else if (data.records && data.records.length > 0) {
+          availableColumns = Object.keys(data.records[0].fields).map(id => ({
+            id,
+            label: id,
+            type: 'Any',
+          }));
+        }
+      } catch (e) {
+        console.error('[table-block] loadColumns fallback error:', e);
+      }
+    }
     renderColumnCheckboxes();
   }
 

@@ -108,9 +108,18 @@ export async function getTableStructure(tableId) {
     _structureCache[tableId] = columns;
     return columns;
   } catch (e) {
-    console.error('[grist-api] getTableStructure error:', e);
+    console.error('[grist-api] getTableStructure SQL error, fallback to fetchTable:', e);
     try {
       const data = await grist.docApi.fetchTable(tableId);
+      if (data.fields) {
+        const columns = Object.entries(data.fields).map(([id, field]) => ({
+          id,
+          label: field.label || id,
+          type: field.type || 'Any',
+        }));
+        _structureCache[tableId] = columns;
+        return columns;
+      }
       const sample = data.records?.[0]?.fields || {};
       const columns = Object.keys(sample).map(id => ({
         id,
@@ -124,6 +133,81 @@ export async function getTableStructure(tableId) {
       return [];
     }
   }
+}
+
+export async function getSelectedTableId() {
+  if (typeof grist === 'undefined') return null;
+  try {
+    if (grist.selectedTable) return grist.selectedTable;
+    if (grist.viewApi && grist.viewApi.getSelectedTable) {
+      return await grist.viewApi.getSelectedTable();
+    }
+    if (grist.raw && grist.raw.selectedTable) return grist.raw.selectedTable;
+    if (grist.sectionApi && grist.sectionApi.getSelectedTable) {
+      return await grist.sectionApi.getSelectedTable();
+    }
+  } catch (e) {
+    console.error('[grist-api] getSelectedTableId error:', e);
+  }
+  return null;
+}
+
+export async function getSelectedTableColumns() {
+  if (typeof grist === 'undefined') return [];
+  try {
+    const table = await grist.getTable();
+    if (table && table.columns) {
+      return table.columns.map(col => ({
+        id: col.id,
+        label: col.label || col.id,
+        type: col.type || 'Any',
+      }));
+    }
+  } catch (e) {
+    console.error('[grist-api] getSelectedTableColumns error:', e);
+  }
+  return [];
+}
+
+export async function getCurrentRecordFields() {
+  if (typeof grist === 'undefined' || !_currentRecord) return null;
+  return _currentRecord.fields || _currentRecord;
+}
+
+export async function listAllTablesWithStructure() {
+  if (typeof grist === 'undefined') return [];
+  try {
+    const tableIds = await grist.docApi.listTables();
+    const result = [];
+    for (const tableId of tableIds) {
+      const structure = await getTableStructure(tableId);
+      result.push({
+        id: tableId,
+        label: tableId,
+        columns: structure,
+      });
+    }
+    return result;
+  } catch (e) {
+    console.error('[grist-api] listAllTablesWithStructure error:', e);
+    return [];
+  }
+}
+
+export function findLinkedTables(record, tableStructures) {
+  const linked = new Set();
+  if (!record || !record.fields) return [];
+  for (const [tableId, structure] of Object.entries(tableStructures)) {
+    for (const col of structure) {
+      if (col.type && col.type.startsWith('Ref:') && record.fields[col.id]) {
+        linked.add(col.type.substring(4));
+      }
+      if (col.type && col.type.startsWith('RefList:') && record.fields[col.id]) {
+        linked.add(col.type.substring(8));
+      }
+    }
+  }
+  return Array.from(linked);
 }
 
 export async function fetchTableData(tableId, options = {}) {

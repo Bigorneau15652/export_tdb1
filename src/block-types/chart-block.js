@@ -1,7 +1,7 @@
 import * as echarts from 'echarts';
 import 'echarts-gl';
 import { createEl } from '../utils.js';
-import { fetchTableData, getTableStructure, listTables } from '../grist-api.js';
+import { fetchTableData, getTableStructure, listTables, getSelectedTableId } from '../grist-api.js';
 import { getPaletteColors } from '../palettes.js';
 
 const CHART_TYPES = [
@@ -286,15 +286,26 @@ export async function createChartEditor(block, onChange, store) {
   titleInput.placeholder = 'Titre optionnel';
   titleInput.addEventListener('input', () => onChange({ chartTitle: titleInput.value }));
 
-  const tables = await listTables();
+  let tables = await listTables();
+  const selectedTableId = await getSelectedTableId();
+
+  if ((!tables || tables.length === 0) && selectedTableId) {
+    tables = [selectedTableId];
+  }
+
   const tableLabel = createEl('label', 'dc-label', 'Table source');
   const tableSelect = createEl('select', 'dc-select dc-select-full');
   tableSelect.appendChild(createEl('option', '', '— Choisir une table —'));
-  tables.forEach(t => {
+  (tables || []).forEach(t => {
     const opt = createEl('option', '', t);
     opt.value = t;
     tableSelect.appendChild(opt);
   });
+
+  if (!cfg.sourceTable && selectedTableId && tables.includes(selectedTableId)) {
+    cfg.sourceTable = selectedTableId;
+    onChange({ sourceTable: selectedTableId });
+  }
   tableSelect.value = cfg.sourceTable || '';
 
   const xColLabel = createEl('label', 'dc-label', 'Colonne X (catégories)');
@@ -322,6 +333,26 @@ export async function createChartEditor(block, onChange, store) {
       return;
     }
     availableColumns = await getTableStructure(tableId);
+    if (availableColumns.length === 0) {
+      try {
+        const data = await fetchTableData(tableId, { limit: 1 });
+        if (data.fields) {
+          availableColumns = Object.entries(data.fields).map(([id, field]) => ({
+            id,
+            label: field.label || id,
+            type: field.type || 'Any',
+          }));
+        } else if (data.records && data.records.length > 0) {
+          availableColumns = Object.keys(data.records[0].fields).map(id => ({
+            id,
+            label: id,
+            type: 'Any',
+          }));
+        }
+      } catch (e) {
+        console.error('[chart-block] loadColumns fallback error:', e);
+      }
+    }
     renderColumnSelectors();
   }
 

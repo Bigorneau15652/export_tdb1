@@ -1,6 +1,6 @@
 import './styles/main.css';
 import { store } from './store.js';
-import { initGrist, onRecord, onOptionsChange, listTables, getCurrentRecord } from './grist-api.js';
+import { initGrist, onRecord, onOptionsChange, listTables, getCurrentRecord, getSelectedTableId, getTableStructure } from './grist-api.js';
 import { PageManager, PAGE_GAP } from './page-manager.js';
 import { BlockManager } from './block-manager.js';
 import { createToolbar } from './toolbar.js';
@@ -249,8 +249,30 @@ async function init() {
   await store.init();
 
   if (isGrist) {
-    const tables = await listTables();
-    store.setTables(tables);
+    try {
+      let tables = await listTables();
+      const selectedTableId = await getSelectedTableId();
+
+      if (selectedTableId) {
+        store.setSelectedTableId(selectedTableId);
+        if (!tables || tables.length === 0 || !tables.includes(selectedTableId)) {
+          tables = tables || [];
+          if (!tables.includes(selectedTableId)) tables.unshift(selectedTableId);
+        }
+        try {
+          const structure = await getTableStructure(selectedTableId);
+          store.setTableStructure(selectedTableId, structure);
+        } catch (e) {
+          console.error('[index] Error loading selected table structure:', e);
+        }
+      }
+
+      store.setTables(tables || []);
+      console.log('[dashboard-composer] Tables loaded:', tables);
+      console.log('[dashboard-composer] Selected table:', selectedTableId);
+    } catch (e) {
+      console.error('[dashboard-composer] Error loading tables:', e);
+    }
   }
 
   setupPrintStyles(store);
@@ -265,8 +287,12 @@ async function init() {
   }, 50));
 
   if (isGrist) {
-    onRecord((record, mappings) => {
+    onRecord(async (record, mappings) => {
       store.setCurrentRecord(record);
+      const selectedTableId = await getSelectedTableId();
+      if (selectedTableId) {
+        store.setSelectedTableId(selectedTableId);
+      }
       refreshAllBlocks();
     });
 

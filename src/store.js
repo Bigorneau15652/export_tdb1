@@ -19,6 +19,7 @@ class Store {
   constructor() {
     this.config = deepClone(defaultConfig);
     this.currentRecord = null;
+    this.selectedTableId = null;
     this.listeners = new Set();
     this.selectedBlockId = null;
     this.editMode = false;
@@ -40,6 +41,7 @@ class Store {
     return {
       config: this.config,
       currentRecord: this.currentRecord,
+      selectedTableId: this.selectedTableId,
       selectedBlockId: this.selectedBlockId,
       editMode: this.editMode,
       previewMode: this.previewMode,
@@ -76,6 +78,11 @@ class Store {
 
   setCurrentRecord(record) {
     this.currentRecord = record;
+    this.notify();
+  }
+
+  setSelectedTableId(tableId) {
+    this.selectedTableId = tableId;
     this.notify();
   }
 

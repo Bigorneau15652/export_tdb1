@@ -1,7 +1,7 @@
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { createEl, sanitizeHtml, debounce } from '../utils.js';
-import { fetchTableData } from '../grist-api.js';
+import { fetchTableData, listTables, getTableStructure, getSelectedTableId } from '../grist-api.js';
 
 marked.setOptions({
   breaks: true,
@@ -54,7 +54,7 @@ export function renderTextBlock(block, container, store) {
   };
 }
 
-export function createTextEditor(block, onChange) {
+export async function createTextEditor(block, onChange, store) {
   const editor = createEl('div', 'dc-block-editor dc-text-editor');
 
   const textarea = createEl('textarea', 'dc-textarea');
@@ -74,10 +74,72 @@ export function createTextEditor(block, onChange) {
   const rawHtml = marked.parse(textarea.value);
   preview.innerHTML = DOMPurify.sanitize(rawHtml);
 
+  const linkSection = createEl('div', 'dc-text-link-section');
+  const linkLabel = createEl('label', 'dc-label', 'Ou lier à une colonne (texte dynamique)');
+
+  let tables = await listTables();
+  const selectedTableId = await getSelectedTableId();
+  if ((!tables || tables.length === 0) && selectedTableId) {
+    tables = [selectedTableId];
+  }
+
+  const tableSelect = createEl('select', 'dc-select dc-select-full');
+  tableSelect.appendChild(createEl('option', '', '— Texte statique (Markdown) —'));
+  (tables || []).forEach(t => {
+    const opt = createEl('option', '', t);
+    opt.value = t;
+    tableSelect.appendChild(opt);
+  });
+  tableSelect.value = block.config.linkedTable || '';
+
+  const colSelect = createEl('select', 'dc-select dc-select-full');
+  colSelect.appendChild(createEl('option', '', '— Choisir une colonne —'));
+
+  async function loadColumns(tableId) {
+    colSelect.innerHTML = '';
+    colSelect.appendChild(createEl('option', '', '— Choisir une colonne —'));
+    if (!tableId) return;
+    let columns = await getTableStructure(tableId);
+    if (columns.length === 0) {
+      try {
+        const data = await fetchTableData(tableId, { limit: 1 });
+        if (data.fields) {
+          columns = Object.entries(data.fields).map(([id, field]) => ({
+            id, label: field.label || id, type: field.type || 'Any',
+          }));
+        }
+      } catch (e) {}
+    }
+    columns.forEach(col => {
+      const opt = createEl('option', '', `${col.label || col.id} (${col.type})`);
+      opt.value = col.id;
+      colSelect.appendChild(opt);
+    });
+    colSelect.value = block.config.linkedColumn || '';
+  }
+
+  tableSelect.addEventListener('change', () => {
+    onChange({ linkedTable: tableSelect.value || null, linkedColumn: null });
+    loadColumns(tableSelect.value);
+  });
+
+  colSelect.addEventListener('change', () => {
+    onChange({ linkedColumn: colSelect.value || null });
+  });
+
+  if (block.config.linkedTable) {
+    await loadColumns(block.config.linkedTable);
+  }
+
+  linkSection.appendChild(linkLabel);
+  linkSection.appendChild(tableSelect);
+  linkSection.appendChild(colSelect);
+
   editor.appendChild(createEl('label', 'dc-label', 'Contenu Markdown'));
   editor.appendChild(textarea);
   editor.appendChild(createEl('label', 'dc-label', 'Aperçu'));
   editor.appendChild(preview);
+  editor.appendChild(linkSection);
 
   return editor;
 }
