@@ -164,6 +164,48 @@ export async function getLinkedTableId() {
   return null;
 }
 
+function findColumnObjects(obj, depth = 0, path = '', results = new Map()) {
+  if (depth > 5 || !obj || typeof obj !== 'object') return results;
+
+  if (Array.isArray(obj)) {
+    for (let i = 0; i < Math.min(obj.length, 3); i++) {
+      findColumnObjects(obj[i], depth + 1, `${path}[${i}]`, results);
+    }
+    return results;
+  }
+
+  for (const [key, val] of Object.entries(obj)) {
+    const currentPath = path ? `${path}.${key}` : key;
+
+    if (val && typeof val === 'object' && !Array.isArray(val)) {
+      const hasColShape = ('label' in val || 'type' in val || 'colId' in val) &&
+                          (typeof val.label === 'string' || typeof val.type === 'string');
+      if (hasColShape && !results.has(currentPath)) {
+        results.set(currentPath, {
+          id: val.colId || val.id || key,
+          label: val.label || val.colId || val.id || key,
+          type: val.type || 'Any',
+        });
+      }
+      findColumnObjects(val, depth + 1, currentPath, results);
+    }
+
+    if (key === 'fields' && val && typeof val === 'object' && !Array.isArray(val)) {
+      for (const [fieldKey, fieldVal] of Object.entries(val)) {
+        if (!results.has(`fields.${fieldKey}`)) {
+          results.set(`fields.${fieldKey}`, {
+            id: fieldKey,
+            label: fieldKey,
+            type: 'Any',
+          });
+        }
+      }
+    }
+  }
+
+  return results;
+}
+
 export async function getTableStructure(tableId) {
   if (!tableId) return [];
   if (_structureCache[tableId]) return _structureCache[tableId];
@@ -174,68 +216,94 @@ export async function getTableStructure(tableId) {
   console.log('[grist-api] ===== getTableStructure START:', tableId, '=====');
 
   const columns = [];
+  const seenIds = new Set();
 
-  console.log('[grist-api] Method 1: docApi.fetchTable()');
+  function addColumn(id, label, type) {
+    if (!id || seenIds.has(id)) return;
+    seenIds.add(id);
+    columns.push({ id, label: label || id, type: type || 'Any' });
+  }
+
+  console.log('[grist-api] Method 1: docApi.fetchTable() - deep exploration');
   try {
     const data = await g.docApi.fetchTable(tableId);
-    console.log('[grist-api] fetchTable result type:', typeof data);
     console.log('[grist-api] fetchTable keys:', data ? Object.keys(data) : 'null');
-    console.log('[grist-api] fetchTable raw (first 2000 chars):', JSON.stringify(data).slice(0, 2000));
+    console.log('[grist-api] fetchTable.colInfo type:', typeof data?.colInfo);
+    console.log('[grist-api] fetchTable.records is array:', Array.isArray(data?.records));
+    console.log('[grist-api] fetchTable.records length:', data?.records?.length || 0);
 
     if (data?.colInfo && typeof data.colInfo === 'object') {
-      console.log('[grist-api] colInfo keys:', Object.keys(data.colInfo).length);
+      console.log('[grist-api] colInfo sample (first 3):', JSON.stringify(Object.entries(data.colInfo).slice(0, 3)));
       for (const [id, col] of Object.entries(data.colInfo)) {
-        columns.push({
-          id: id,
-          label: col.label || id,
-          type: col.type || 'Any',
-        });
+        addColumn(id, col?.label || id, col?.type);
       }
-      console.log('[grist-api] Method 1 SUCCESS:', columns.length, 'columns from colInfo');
-    } else if (data?.fields && typeof data.fields === 'object') {
-      console.log('[grist-api] fields keys:', Object.keys(data.fields).length);
-      for (const [id, col] of Object.entries(data.fields)) {
-        columns.push({
-          id: id,
-          label: col?.label || id,
-          type: col?.type || 'Any',
-        });
-      }
-      console.log('[grist-api] Method 1 SUCCESS:', columns.length, 'columns from fields');
-    } else if (data?.records?.length > 0) {
+      console.log('[grist-api] Method 1: added', columns.length, 'from colInfo');
+    }
+
+    if (columns.length === 0 && data?.records?.length > 0) {
       const firstRec = data.records[0];
-      console.log('[grist-api] first record keys:', Object.keys(firstRec));
-      console.log('[grist-api] first record.fields keys:', firstRec.fields ? Object.keys(firstRec.fields).length : 'no fields');
-      if (firstRec.fields) {
+      console.log('[grist-api] first record:', JSON.stringify(firstRec).slice(0, 500));
+      if (firstRec.fields && typeof firstRec.fields === 'object') {
         for (const id of Object.keys(firstRec.fields)) {
-          columns.push({ id, label: id, type: 'Any' });
+          addColumn(id, id, 'Any');
         }
-        console.log('[grist-api] Method 1 SUCCESS:', columns.length, 'columns from record.fields');
+        console.log('[grist-api] Method 1: added', columns.length, 'from record.fields');
       }
-    } else {
-      console.log('[grist-api] Method 1: no colInfo, no fields, records:', data?.records?.length || 0);
+    }
+
+    if (columns.length === 0) {
+      console.log('[grist-api] Method 1b: deep recursive search in fetchTable result');
+      const found = findColumnObjects(data);
+      console.log('[grist-api] Deep search found', found.size, 'potential columns');
+      for (const [path, col] of found) {
+        console.log('[grist-api]   found at', path, ':', col.id, '/', col.label);
+        addColumn(col.id, col.label, col.type);
+      }
     }
   } catch (e) {
     console.log('[grist-api] Method 1 FAILED:', e.message);
   }
 
   if (columns.length === 0) {
-    console.log('[grist-api] Method 2: SQL on _grist_Tables_column');
+    console.log('[grist-api] Method 2: SQL SELECT * LIMIT 1');
     try {
-      const sql = `SELECT id, label, type, parentPos FROM _grist_Tables_column WHERE tableRef = (SELECT id FROM _grist_Tables WHERE id = ${escapeSqlValue(tableId)}) ORDER BY parentPos`;
-      console.log('[grist-api] SQL:', sql);
-      const result = await g.docApi.executeSQL({ sql });
-      console.log('[grist-api] SQL result records:', result?.records?.length || 0);
-      console.log('[grist-api] SQL result raw (first 1000 chars):', JSON.stringify(result).slice(0, 1000));
+      const result = await g.docApi.executeSQL({
+        sql: `SELECT * FROM ${escapeSqlIdentifier(tableId)} LIMIT 1`
+      });
+      console.log('[grist-api] SELECT * result keys:', result ? Object.keys(result) : 'null');
+      console.log('[grist-api] SELECT * result raw (first 3000 chars):', JSON.stringify(result).slice(0, 3000));
+
       if (result?.records?.length > 0) {
-        for (const r of result.records) {
-          columns.push({
-            id: r.fields.id,
-            label: r.fields.label || r.fields.id,
-            type: r.fields.type || 'Any',
-          });
+        const rec = result.records[0];
+        console.log('[grist-api] record keys:', Object.keys(rec));
+        if (rec.fields) {
+          console.log('[grist-api] record.fields keys:', Object.keys(rec.fields));
+          for (const id of Object.keys(rec.fields)) {
+            addColumn(id, id, 'Any');
+          }
         }
-        console.log('[grist-api] Method 2 SUCCESS:', columns.length, 'columns');
+      }
+
+      if (columns.length === 0 && result?.fields) {
+        console.log('[grist-api] result.fields keys:', Object.keys(result.fields));
+        for (const [id, col] of Object.entries(result.fields)) {
+          addColumn(id, col?.label || id, col?.type);
+        }
+      }
+
+      if (columns.length === 0 && result?.colInfo) {
+        console.log('[grist-api] result.colInfo keys:', Object.keys(result.colInfo));
+        for (const [id, col] of Object.entries(result.colInfo)) {
+          addColumn(id, col?.label || id, col?.type);
+        }
+      }
+
+      if (columns.length === 0) {
+        const found = findColumnObjects(result);
+        console.log('[grist-api] Deep search in SQL result found', found.size, 'columns');
+        for (const [path, col] of found) {
+          addColumn(col.id, col.label, col.type);
+        }
       }
     } catch (e) {
       console.log('[grist-api] Method 2 FAILED:', e.message);
@@ -243,20 +311,18 @@ export async function getTableStructure(tableId) {
   }
 
   if (columns.length === 0) {
-    console.log('[grist-api] Method 3: SQL SELECT * LIMIT 1');
+    console.log('[grist-api] Method 3: SQL on _grist_Tables_column');
     try {
       const result = await g.docApi.executeSQL({
-        sql: `SELECT * FROM ${escapeSqlIdentifier(tableId)} LIMIT 1`
+        sql: `SELECT * FROM _grist_Tables_column`
       });
-      console.log('[grist-api] SELECT * result records:', result?.records?.length || 0);
-      console.log('[grist-api] SELECT * raw (first 2000 chars):', JSON.stringify(result).slice(0, 2000));
+      console.log('[grist-api] All columns table records:', result?.records?.length || 0);
+      console.log('[grist-api] All columns raw (first 3000 chars):', JSON.stringify(result).slice(0, 3000));
+
       if (result?.records?.length > 0) {
-        const fields = result.records[0].fields || {};
-        console.log('[grist-api] SELECT * fields keys:', Object.keys(fields));
-        for (const id of Object.keys(fields)) {
-          columns.push({ id, label: id, type: 'Any' });
-        }
-        console.log('[grist-api] Method 3 SUCCESS:', columns.length, 'columns');
+        console.log('[grist-api] First col record:', JSON.stringify(result.records[0]).slice(0, 500));
+        const firstRec = result.records[0];
+        console.log('[grist-api] First col record fields keys:', firstRec.fields ? Object.keys(firstRec.fields) : 'none');
       }
     } catch (e) {
       console.log('[grist-api] Method 3 FAILED:', e.message);
@@ -264,26 +330,39 @@ export async function getTableStructure(tableId) {
   }
 
   if (columns.length === 0) {
-    console.log('[grist-api] Method 4: SQL SELECT * LIMIT 0 (columns only via sqlite pragma)');
+    console.log('[grist-api] Method 4: SQL SELECT specific columns FROM table LIMIT 1');
     try {
       const result = await g.docApi.executeSQL({
-        sql: `SELECT * FROM ${escapeSqlIdentifier(tableId)} LIMIT 0`
+        sql: `SELECT id FROM ${escapeSqlIdentifier(tableId)} LIMIT 1`
       });
-      console.log('[grist-api] LIMIT 0 result:', JSON.stringify(result).slice(0, 1000));
-      if (result?.fields) {
-        for (const [id, col] of Object.entries(result.fields)) {
-          columns.push({ id, label: col?.label || id, type: col?.type || 'Any' });
+      console.log('[grist-api] SELECT id result:', JSON.stringify(result).slice(0, 1000));
+    } catch (e) {
+      console.log('[grist-api] Method 4 FAILED:', e.message);
+    }
+  }
+
+  if (columns.length === 0) {
+    console.log('[grist-api] Method 5: PRAGMA table_info via SQL');
+    try {
+      const result = await g.docApi.executeSQL({
+        sql: `SELECT name FROM pragma_table_info(${escapeSqlValue(tableId)})`
+      });
+      console.log('[grist-api] PRAGMA result:', JSON.stringify(result).slice(0, 2000));
+      if (result?.records?.length > 0) {
+        for (const r of result.records) {
+          const name = r.fields?.name || r.fields?.id;
+          if (name) addColumn(name, name, 'Any');
         }
       }
     } catch (e) {
-      console.log('[grist-api] Method 4 FAILED:', e.message);
+      console.log('[grist-api] Method 5 FAILED:', e.message);
     }
   }
 
   if (columns.length > 0) {
     _structureCache[tableId] = columns;
   }
-  console.log('[grist-api] ===== getTableStructure END:', columns.length, 'columns for', tableId, '=====');
+  console.log('[grist-api] ===== getTableStructure END:', columns.length, 'columns:', columns.map(c => c.id).join(', '), '=====');
   return columns;
 }
 
@@ -311,7 +390,7 @@ export async function fetchTableData(tableId, options = {}) {
   const g = getGrist();
   if (!g || !tableId) return { records: [], fields: {} };
 
-  console.log('[grist-api] fetchTableData:', tableId, 'columns:', columns?.length, 'filters:', filters?.length, 'limit:', limit);
+  console.log('[grist-api] fetchTableData:', tableId, 'cols:', columns?.length, 'filters:', filters?.length, 'limit:', limit);
 
   try {
     let sql = `SELECT * FROM ${escapeSqlIdentifier(tableId)}`;
@@ -356,7 +435,6 @@ export async function fetchTableData(tableId, options = {}) {
     return { records: result.records || [], fields: result.fields || {} };
   } catch (e) {
     console.error('[grist-api] fetchTableData SQL error:', e.message);
-    console.log('[grist-api] Fallback to fetchTable...');
     try {
       const data = await g.docApi.fetchTable(tableId);
       let records = data.records || [];
