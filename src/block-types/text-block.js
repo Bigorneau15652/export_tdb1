@@ -1,0 +1,83 @@
+import { marked } from 'marked';
+import DOMPurify from 'dompurify';
+import { createEl, sanitizeHtml, debounce } from '../utils.js';
+import { fetchTableData } from '../grist-api.js';
+
+marked.setOptions({
+  breaks: true,
+  gfm: true,
+});
+
+export function renderTextBlock(block, container, store) {
+  container.className = 'dc-block-content dc-text-block';
+  container.innerHTML = '';
+
+  const contentEl = createEl('div', 'dc-text-content');
+  container.appendChild(contentEl);
+
+  async function update() {
+    let markdown = block.config.markdown || '';
+
+    if (block.config.linkedTable && block.config.linkedColumn && store.currentRecord) {
+      try {
+        const data = await fetchTableData(block.config.linkedTable, { limit: 1000 });
+        const rec = data.records.find(r => r.id === store.currentRecord.id);
+        if (rec && rec.fields[block.config.linkedColumn]) {
+          const val = rec.fields[block.config.linkedColumn];
+          markdown = typeof val === 'string' ? val : JSON.stringify(val);
+        }
+      } catch (e) {
+        console.error('[text-block] Error fetching linked data:', e);
+      }
+    }
+
+    const rawHtml = marked.parse(markdown);
+    const cleanHtml = DOMPurify.sanitize(rawHtml, {
+      ALLOWED_TAGS: [
+        'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'br', 'hr',
+        'strong', 'b', 'em', 'i', 'u', 's', 'del', 'ins', 'mark',
+        'ul', 'ol', 'li', 'a', 'code', 'pre', 'blockquote',
+        'table', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td',
+        'img', 'span', 'div', 'small', 'sub', 'sup',
+      ],
+      ALLOWED_ATTR: ['href', 'title', 'src', 'alt', 'class', 'style', 'colspan', 'rowspan'],
+      ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|ftp):|[^a-z]|[a-z+.-]+(?:[^a-z+.:-]|$))/i,
+    });
+    contentEl.innerHTML = cleanHtml;
+  }
+
+  update();
+
+  return {
+    update,
+    destroy() {},
+  };
+}
+
+export function createTextEditor(block, onChange) {
+  const editor = createEl('div', 'dc-block-editor dc-text-editor');
+
+  const textarea = createEl('textarea', 'dc-textarea');
+  textarea.value = block.config.markdown || '';
+  textarea.placeholder = 'Écrivez votre texte en Markdown...\n\n# Titre\n**gras** *italique*\n- liste';
+
+  const preview = createEl('div', 'dc-text-preview');
+
+  const updatePreview = debounce(() => {
+    const rawHtml = marked.parse(textarea.value);
+    preview.innerHTML = DOMPurify.sanitize(rawHtml);
+    onChange({ markdown: textarea.value });
+  }, 300);
+
+  textarea.addEventListener('input', updatePreview);
+
+  const rawHtml = marked.parse(textarea.value);
+  preview.innerHTML = DOMPurify.sanitize(rawHtml);
+
+  editor.appendChild(createEl('label', 'dc-label', 'Contenu Markdown'));
+  editor.appendChild(textarea);
+  editor.appendChild(createEl('label', 'dc-label', 'Aperçu'));
+  editor.appendChild(preview);
+
+  return editor;
+}

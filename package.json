@@ -1,0 +1,32 @@
+{
+  "name": "grist-dashboard-composer",
+  "version": "0.1.0",
+  "description": "Widget Grist générique - Compositeur de tableaux de bord imprimables/exportables en PDF",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "webpack serve --mode development --port 8585",
+    "build": "webpack --mode production",
+    "watch": "webpack --mode development --watch",
+    "deploy": "npm run build && gh-pages -d dist",
+    "test": "echo \"No tests yet\" && exit 0"
+  },
+  "keywords": ["grist", "widget", "dashboard", "pdf", "composer"],
+  "author": "Holweck",
+  "license": "Apache-2.0",
+  "devDependencies": {
+    "css-loader": "^7.1.2",
+    "gh-pages": "^6.2.0",
+    "html-webpack-plugin": "^5.6.0",
+    "style-loader": "^4.0.0",
+    "webpack": "^5.95.0",
+    "webpack-cli": "^5.1.4",
+    "webpack-dev-server": "^5.1.0"
+  },
+  "dependencies": {
+    "dompurify": "^3.1.7",
+    "echarts": "^5.5.1",
+    "echarts-gl": "^2.0.9",
+    "interactjs": "^1.10.28",
+    "marked": "^14.1.3"
+  }
+}
