@@ -1,27 +1,27 @@
 # Deploiement GitHub Pages - export_tdb1
 
-## Etape 1 : Activer GitHub Pages
+## ⚠️ ACTION REQUISE : Changer la source GitHub Pages
 
-Va sur : **https://github.com/Bigorneau15652/export_tdb1/settings/pages**
+Le widget est déployé sur la branche `gh-pages`, mais GitHub Pages est encore configuré pour lire la branche `main`.
 
-1. Sous **Source**, selectionne **GitHub Actions**
-2. Clique sur **Save**
+### Va sur : https://github.com/Bigorneau15652/export_tdb1/settings/pages
 
-## Etape 2 : Relancer le deploiement
+1. Sous **Build and deployment > Source**, change de **"GitHub Actions"** vers **"Deploy from a branch"**
+2. Branche : sélectionne **`gh-pages`**
+3. Dossier : **`/` (root)**
+4. Clique sur **Save**
 
-Apres activation, le workflow se relancera automatiquement au prochain push.
-Ou va dans **Actions** > **Deploy to GitHub Pages** > **Run workflow**
+> ⏱️ Le site sera disponible dans 1-2 minutes après le changement.
 
-## Etape 3 : Verifier l'URL
+## URL du widget (après changement)
 
-Le widget sera disponible a :
 **https://bigorneau15652.github.io/export_tdb1/**
 
-## Etape 4 : Ajouter dans Grist (https://grist.numerique.gouv.fr/)
+## Ajouter dans Grist (https://grist.numerique.gouv.fr/)
 
 1. **Add New > Add Widget to Page > Custom**
 2. URL : `https://bigorneau15652.github.io/export_tdb1/`
-3. Accorder l'acces **full** au document
+3. Accorder l'accès **full** au document
 4. Configurer la table source
 
 ## Commandes utiles
@@ -32,9 +32,18 @@ git add -A
 git commit -m "feat: description du changement"
 git push origin main
 
-# Verifier le statut du deploiement
-gh api repos/Bigorneau15652/export_tdb1/actions/runs --jq '.workflow_runs[0] | {status, conclusion, created_at}'
+# Le deploiement se fait automatiquement sur gh-pages
 
-# Voir les logs en cas d'erreur
-gh api repos/Bigorneau15652/export_tdb1/actions/runs --jq '.workflow_runs[0].id'
+# Verifier le statut
+gh api repos/Bigorneau15652/export_tdb1/actions/runs --jq '.workflow_runs[0] | {status, conclusion}'
+
+# Voir le contenu de gh-pages
+gh api "repos/Bigorneau15652/export_tdb1/contents?ref=gh-pages" --jq '.[].name'
 ```
+
+## Structure des branches
+
+| Branche | Contenu |
+|---------|---------|
+| `main` | Code source (src/, package.json, webpack, etc.) |
+| `gh-pages` | Build de production (dist/) — déployé auto par CI |
