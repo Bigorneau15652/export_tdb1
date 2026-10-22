@@ -3,9 +3,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https://grist.numerique.gouv.fr https://docs.getgrist.com https://*.getgrist.com;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://grist.numerique.gouv.fr https://docs.getgrist.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https://grist.numerique.gouv.fr https://docs.getgrist.com https://*.getgrist.com;">
   <title>Dashboard Composer - Grist Widget</title>
-  <script src="https://docs.getgrist.com/grist-plugin-api.js"></script>
+  <script src="https://grist.numerique.gouv.fr/grist-plugin-api.js"></script>
+  <script>
+    if (typeof window.grist === 'undefined') {
+      document.write('<script src="https://docs.getgrist.com/grist-plugin-api.js"><\/script>');
+    }
+  </script>
 </head>
 <body>
   <div id="app"></div>

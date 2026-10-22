@@ -8,27 +8,51 @@ let _isReady = false;
 let _recordCallback = null;
 let _optionsCallback = null;
 
+function getGrist() {
+  if (typeof window !== 'undefined' && window.grist) return window.grist;
+  if (!!getGrist()) return grist;
+  return null;
+}
+
+export function isGristAvailable() {
+  return getGrist() !== null;
+}
+
 export async function initGrist() {
-  if (typeof grist === 'undefined') {
+  const g = getGrist();
+  if (!g) {
     console.warn('[grist-api] Running outside Grist context (dev mode)');
     return false;
   }
 
-  await grist.ready({
-    requiredAccess: 'full',
-    allowSelectBy: true,
-  });
+  console.log('[grist-api] grist object found:', Object.keys(g));
+  console.log('[grist-api] grist.docApi:', !!g.docApi);
+  console.log('[grist-api] grist.selectedTable:', g.selectedTable);
+
+  try {
+    await g.ready({
+      requiredAccess: 'full',
+      allowSelectBy: true,
+    });
+  } catch (e) {
+    console.error('[grist-api] grist.ready() error:', e);
+    try {
+      await g.ready();
+    } catch (e2) {
+      console.error('[grist-api] grist.ready() fallback error:', e2);
+    }
+  }
 
   _isReady = true;
   console.log('[grist-api] Grist widget ready');
 
-  grist.onRecord((record, mappings) => {
+  g.onRecord((record, mappings) => {
     _currentRecord = record;
     _currentMappings = mappings;
     if (_recordCallback) _recordCallback(record, mappings);
   });
 
-  grist.onOptions((options) => {
+  g.onOptions((options) => {
     if (_optionsCallback) _optionsCallback(options);
   });
 
@@ -56,9 +80,9 @@ export function isGristReady() {
 }
 
 export async function getOptions() {
-  if (typeof grist === 'undefined') return {};
+  if (!getGrist()) return {};
   try {
-    return await grist.getOptions();
+    return await getGrist().getOptions();
   } catch (e) {
     console.error('[grist-api] getOptions error:', e);
     return {};
@@ -66,18 +90,18 @@ export async function getOptions() {
 }
 
 export async function setOption(key, value) {
-  if (typeof grist === 'undefined') return;
+  if (!getGrist()) return;
   try {
-    await grist.setOption(key, value);
+    await getGrist().setOption(key, value);
   } catch (e) {
     console.error('[grist-api] setOption error:', e);
   }
 }
 
 export async function listTables() {
-  if (typeof grist === 'undefined') return [];
+  if (!getGrist()) return [];
   try {
-    return await grist.docApi.listTables();
+    return await getGrist().docApi.listTables();
   } catch (e) {
     console.error('[grist-api] listTables error:', e);
     return [];
@@ -88,7 +112,7 @@ export async function getTableStructure(tableId) {
   if (!tableId) return [];
   if (_structureCache[tableId]) return _structureCache[tableId];
 
-  if (typeof grist === 'undefined') return [];
+  if (!getGrist()) return [];
 
   try {
     const sql = `SELECT col.id as colId, col.label, col.type, col.parentPos
@@ -96,7 +120,7 @@ export async function getTableStructure(tableId) {
                  JOIN _grist_Tables tbl ON col.tableRef = tbl.id
                  WHERE tbl.id = ${escapeSqlValue(tableId)}
                  ORDER BY col.parentPos`;
-    const result = await grist.docApi.executeSQL({ sql });
+    const result = await getGrist().docApi.executeSQL({ sql });
     const columns = result.records
       ? result.records.map(r => ({
           id: r.fields.colId,
@@ -110,7 +134,7 @@ export async function getTableStructure(tableId) {
   } catch (e) {
     console.error('[grist-api] getTableStructure SQL error, fallback to fetchTable:', e);
     try {
-      const data = await grist.docApi.fetchTable(tableId);
+      const data = await getGrist().docApi.fetchTable(tableId);
       if (data.fields) {
         const columns = Object.entries(data.fields).map(([id, field]) => ({
           id,
@@ -136,15 +160,15 @@ export async function getTableStructure(tableId) {
 }
 
 export async function getSelectedTableId() {
-  if (typeof grist === 'undefined') return null;
+  if (!getGrist()) return null;
   try {
-    if (grist.selectedTable) return grist.selectedTable;
-    if (grist.viewApi && grist.viewApi.getSelectedTable) {
-      return await grist.viewApi.getSelectedTable();
+    if (getGrist().selectedTable) return getGrist().selectedTable;
+    if (getGrist().viewApi && getGrist().viewApi.getSelectedTable) {
+      return await getGrist().viewApi.getSelectedTable();
     }
-    if (grist.raw && grist.raw.selectedTable) return grist.raw.selectedTable;
-    if (grist.sectionApi && grist.sectionApi.getSelectedTable) {
-      return await grist.sectionApi.getSelectedTable();
+    if (getGrist().raw && getGrist().raw.selectedTable) return getGrist().raw.selectedTable;
+    if (getGrist().sectionApi && getGrist().sectionApi.getSelectedTable) {
+      return await getGrist().sectionApi.getSelectedTable();
     }
   } catch (e) {
     console.error('[grist-api] getSelectedTableId error:', e);
@@ -153,9 +177,9 @@ export async function getSelectedTableId() {
 }
 
 export async function getSelectedTableColumns() {
-  if (typeof grist === 'undefined') return [];
+  if (!getGrist()) return [];
   try {
-    const table = await grist.getTable();
+    const table = await getGrist().getTable();
     if (table && table.columns) {
       return table.columns.map(col => ({
         id: col.id,
@@ -170,14 +194,14 @@ export async function getSelectedTableColumns() {
 }
 
 export async function getCurrentRecordFields() {
-  if (typeof grist === 'undefined' || !_currentRecord) return null;
+  if (!getGrist() || !_currentRecord) return null;
   return _currentRecord.fields || _currentRecord;
 }
 
 export async function listAllTablesWithStructure() {
-  if (typeof grist === 'undefined') return [];
+  if (!getGrist()) return [];
   try {
-    const tableIds = await grist.docApi.listTables();
+    const tableIds = await getGrist().docApi.listTables();
     const result = [];
     for (const tableId of tableIds) {
       const structure = await getTableStructure(tableId);
@@ -213,7 +237,7 @@ export function findLinkedTables(record, tableStructures) {
 export async function fetchTableData(tableId, options = {}) {
   const { columns, filters, sorts, limit } = options;
 
-  if (typeof grist === 'undefined') return { records: [], fields: {} };
+  if (!getGrist()) return { records: [], fields: {} };
 
   if (!tableId) return { records: [], fields: {} };
 
@@ -260,7 +284,7 @@ export async function fetchTableData(tableId, options = {}) {
       sql += ` LIMIT ${parseInt(limit, 10)}`;
     }
 
-    const result = await grist.docApi.executeSQL({ sql });
+    const result = await getGrist().docApi.executeSQL({ sql });
     return {
       records: result.records || [],
       fields: result.fields || {},
@@ -268,7 +292,7 @@ export async function fetchTableData(tableId, options = {}) {
   } catch (e) {
     console.error('[grist-api] fetchTableData SQL error, fallback to fetchTable:', e);
     try {
-      const data = await grist.docApi.fetchTable(tableId);
+      const data = await getGrist().docApi.fetchTable(tableId);
       let records = data.records || [];
 
       if (filters && filters.length > 0) {
@@ -329,9 +353,9 @@ export async function fetchTableData(tableId, options = {}) {
 }
 
 export async function getSelectedTable() {
-  if (typeof grist === 'undefined') return null;
+  if (!getGrist()) return null;
   try {
-    return grist.selectedTable;
+    return getGrist().selectedTable;
   } catch (e) {
     return null;
   }

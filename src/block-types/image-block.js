@@ -70,10 +70,11 @@ export async function renderImageBlock(block, container, store) {
       const selected = images[idx];
 
       if (typeof selected === 'number') {
-        if (typeof grist !== 'undefined') {
+        const g = window.grist || (typeof grist !== 'undefined' ? grist : null);
+        if (g && g.docApi) {
           try {
-            const token = await grist.docApi.getAccessToken({ readOnly: true });
-            imageUrl = `/api/docs/${grist.docApi._docId || ''}/attachments/${selected}/download`;
+            const token = await g.docApi.getAccessToken({ readOnly: true });
+            imageUrl = `/api/docs/${g.docApi._docId || ''}/attachments/${selected}/download`;
           } catch (e) {
             imageUrl = null;
           }
@@ -120,7 +121,7 @@ export async function createImageEditor(block, onChange, store) {
 
   let tables = await listTables();
   const selectedTableId = await getSelectedTableId();
-  const isGristContext = typeof grist !== 'undefined';
+  const isGristContext = !!(window.grist || (typeof grist !== 'undefined' && grist));
 
   if ((!tables || tables.length === 0) && selectedTableId) {
     tables = [selectedTableId];

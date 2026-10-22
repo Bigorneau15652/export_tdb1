@@ -288,7 +288,7 @@ export async function createChartEditor(block, onChange, store) {
 
   let tables = await listTables();
   const selectedTableId = await getSelectedTableId();
-  const isGristContext = typeof grist !== 'undefined';
+  const isGristContext = !!(window.grist || (typeof grist !== 'undefined' && grist));
 
   if ((!tables || tables.length === 0) && selectedTableId) {
     tables = [selectedTableId];

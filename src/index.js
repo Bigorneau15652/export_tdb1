@@ -250,20 +250,20 @@ async function init() {
 
   if (isGrist) {
     try {
+      const g = window.grist || (typeof grist !== 'undefined' ? grist : null);
       let tables = await listTables();
       const selectedTableId = await getSelectedTableId();
-      const accessInfo = await grist.getAccessToken ? 'has-token-api' : 'no-token-api';
 
       console.log('[dashboard-composer] === DEBUG INFO ===');
-      console.log('[dashboard-composer] grist object keys:', Object.keys(grist));
-      console.log('[dashboard-composer] grist.docApi:', !!grist.docApi);
-      console.log('[dashboard-composer] grist.selectedTable:', grist.selectedTable);
-      console.log('[dashboard-composer] grist.raw:', !!grist.raw);
-      console.log('[dashboard-composer] grist.viewApi:', !!grist.viewApi);
-      console.log('[dashboard-composer] grist.sectionApi:', !!grist.sectionApi);
+      console.log('[dashboard-composer] window.grist:', !!window.grist);
+      console.log('[dashboard-composer] grist object keys:', g ? Object.keys(g) : 'null');
+      console.log('[dashboard-composer] grist.docApi:', g ? !!g.docApi : 'null');
+      console.log('[dashboard-composer] grist.selectedTable:', g ? g.selectedTable : 'null');
+      console.log('[dashboard-composer] grist.raw:', g ? !!g.raw : 'null');
+      console.log('[dashboard-composer] grist.viewApi:', g ? !!g.viewApi : 'null');
+      console.log('[dashboard-composer] grist.sectionApi:', g ? !!g.sectionApi : 'null');
       console.log('[dashboard-composer] listTables result:', tables);
       console.log('[dashboard-composer] selectedTableId:', selectedTableId);
-      console.log('[dashboard-composer] access:', accessInfo);
 
       if (selectedTableId) {
         store.setSelectedTableId(selectedTableId);
@@ -280,9 +280,9 @@ async function init() {
         }
       }
 
-      if ((!tables || tables.length === 0) && grist.docApi) {
+      if ((!tables || tables.length === 0) && g && g.docApi) {
         try {
-          const sqlResult = await grist.docApi.executeSQL({
+          const sqlResult = await g.docApi.executeSQL({
             sql: 'SELECT id FROM _grist_Tables ORDER BY id'
           });
           tables = sqlResult.records.map(r => r.fields.id);
