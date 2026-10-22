@@ -1,7 +1,7 @@
 [
   {
     "name": "Dashboard Composer",
-    "url": "https://bigorneau15652.github.io/grist-dashboard-composer/",
+    "url": "https://bigorneau15652.github.io/export_tdb1/",
     "description": "Compositeur universel de tableaux de bord imprimables/exportables en PDF. Créez des zones de texte (Markdown), tableaux avec agrégations, graphiques (ECharts) et images sur des pages A3/A4/A5, liées dynamiquement à vos tables Grist.",
     "author": "Holweck",
     "isremoverequiredfork": false,

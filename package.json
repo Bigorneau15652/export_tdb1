@@ -1,5 +1,5 @@
 {
-  "name": "grist-dashboard-composer",
+  "name": "export-tdb1",
   "version": "0.1.0",
   "description": "Widget Grist générique - Compositeur de tableaux de bord imprimables/exportables en PDF",
   "main": "src/index.js",

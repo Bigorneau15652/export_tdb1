@@ -17,7 +17,7 @@ Widget Grist générique — Compositeur universel de tableaux de bord imprimabl
 
 1. Dans votre document Grist (https://grist.numerique.gouv.fr/), cliquez sur **Add New → Add Widget to Page**
 2. Choisissez **Custom**
-3. Collez l'URL : `https://bigorneau15652.github.io/grist-dashboard-composer/`
+3. Collez l'URL : `https://bigorneau15652.github.io/export_tdb1/`
 4. Accordez l'accès **full** au document
 
 ## 🛠️ Développement local
