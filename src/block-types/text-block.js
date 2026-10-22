@@ -1,7 +1,7 @@
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { createEl, debounce } from '../utils.js';
-import { fetchLinkedTableData, fetchTableData, getLinkedTableColumns, getTableStructure, getAllTablesWithColumns } from '../grist-api.js';
+import { fetchLinkedTableData, fetchTableData, getLinkedTableColumns, getTableStructure, getAllTablesWithColumns, getLinkedTableId } from '../grist-api.js';
 
 marked.setOptions({
   breaks: true,
@@ -97,29 +97,47 @@ export async function createTextEditor(block, onChange, store) {
   linkSection.appendChild(linkLabel);
   linkSection.appendChild(createEl('p', 'dc-hint', 'Le texte ci-dessus sera remplacé par la valeur de la colonne choisie, pour la ligne active.'));
 
+  const tableSelect = createEl('select', 'dc-select dc-select-full');
+  tableSelect.appendChild(createEl('option', '', '— Texte statique (Markdown ci-dessus) —'));
+
   const colSelect = createEl('select', 'dc-select dc-select-full');
-  colSelect.appendChild(createEl('option', '', '— Texte statique (Markdown ci-dessus) —'));
+  colSelect.appendChild(createEl('option', '', '— Choisir une colonne —'));
 
-  async function loadColumns() {
-    colSelect.innerHTML = '';
-    colSelect.appendChild(createEl('option', '', '— Texte statique (Markdown ci-dessus) —'));
-    colSelect.appendChild(createEl('option', '', '⏳ Chargement...'));
+  let allTablesData = {};
 
-    let columns = await getLinkedTableColumns();
-    console.log('[text-block] Linked columns:', columns.length);
+  async function loadTables() {
+    tableSelect.innerHTML = '';
+    tableSelect.appendChild(createEl('option', '', '— Texte statique (Markdown ci-dessus) —'));
+    tableSelect.appendChild(createEl('option', '', '⏳ Chargement...'));
 
-    if (columns.length === 0 && block.config.linkedTable) {
-      columns = await getTableStructure(block.config.linkedTable);
+    allTablesData = await getAllTablesWithColumns();
+    const tableIds = Object.keys(allTablesData);
+    const linkedId = await getLinkedTableId();
+    console.log('[text-block] Tables:', tableIds, 'Linked:', linkedId);
+
+    tableSelect.innerHTML = '';
+    tableSelect.appendChild(createEl('option', '', '— Texte statique (Markdown ci-dessus) —'));
+    tableIds.forEach(tid => {
+      const opt = createEl('option', '', tid);
+      opt.value = tid;
+      tableSelect.appendChild(opt);
+    });
+
+    if (block.config.linkedTable && tableIds.includes(block.config.linkedTable)) {
+      tableSelect.value = block.config.linkedTable;
+      loadColumns(block.config.linkedTable);
+    } else if (linkedId && tableIds.includes(linkedId)) {
+      tableSelect.value = linkedId;
+      loadColumns(linkedId);
     }
+  }
 
+  async function loadColumns(tableId) {
     colSelect.innerHTML = '';
-    colSelect.appendChild(createEl('option', '', '— Texte statique (Markdown ci-dessus) —'));
+    colSelect.appendChild(createEl('option', '', '— Choisir une colonne —'));
+    if (!tableId) return;
 
-    if (columns.length === 0) {
-      colSelect.appendChild(createEl('option', '', '⚠️ Aucune colonne disponible'));
-      return;
-    }
-
+    const columns = allTablesData[tableId] || await getTableStructure(tableId);
     columns.forEach(col => {
       const opt = createEl('option', '', `${col.label || col.id} (${col.type})`);
       opt.value = col.id;
@@ -128,18 +146,26 @@ export async function createTextEditor(block, onChange, store) {
     colSelect.value = block.config.linkedColumn || '';
   }
 
-  colSelect.addEventListener('change', () => {
+  tableSelect.addEventListener('change', () => {
+    const tid = tableSelect.value;
     onChange({
-      linkedColumn: colSelect.value || null,
-      useLinkedTable: true,
+      linkedTable: tid || null,
+      linkedColumn: null,
+      useLinkedTable: !!tid,
     });
+    loadColumns(tid);
   });
 
+  colSelect.addEventListener('change', () => {
+    onChange({ linkedColumn: colSelect.value || null });
+  });
+
+  linkSection.appendChild(tableSelect);
   linkSection.appendChild(colSelect);
 
   editor.appendChild(linkSection);
 
-  await loadColumns();
+  await loadTables();
 
   return editor;
 }

@@ -27,7 +27,7 @@ export async function initGrist() {
     return false;
   }
 
-  console.log('[grist-api] grist object found, keys:', Object.keys(g).length);
+  console.log('[grist-api] grist keys:', Object.keys(g).join(', '));
 
   try {
     await g.ready({
@@ -47,7 +47,7 @@ export async function initGrist() {
   console.log('[grist-api] Grist widget ready');
 
   g.onRecord(async (record, mappings) => {
-    console.log('[grist-api] onRecord:', record ? `id=${record.id}` : 'null');
+    console.log('[grist-api] onRecord:', record ? `id=${record.id}` : 'null', 'mappings:', mappings ? Object.keys(mappings).length : 0);
     _currentRecord = record;
     _currentMappings = mappings;
     _linkedColumnsCache = null;
@@ -138,154 +138,131 @@ export async function getLinkedTableId() {
   const g = getGrist();
   if (!g) return null;
 
-  console.log('[grist-api] getLinkedTableId: start');
+  console.log('[grist-api] === getLinkedTableId: start ===');
 
-  try {
-    if (typeof g.getTable === 'function') {
-      const table = await g.getTable();
-      console.log('[grist-api] getTable() type:', typeof table, table?.constructor?.name);
+  if (typeof g.getTable === 'function') {
+    try {
+      const table = g.getTable();
+      console.log('[grist-api] getTable() result type:', typeof table);
+      console.log('[grist-api] getTable() constructor:', table?.constructor?.name);
+      console.log('[grist-api] getTable() own keys:', table ? Object.keys(table) : 'null');
 
       if (typeof table === 'string') {
         _linkedTableIdCache = table;
+        console.log('[grist-api] Found via getTable() string:', table);
         return table;
       }
 
       if (table && typeof table === 'object') {
         const proto = Object.getPrototypeOf(table);
-        const protoMethods = proto ? Object.getOwnPropertyNames(proto).filter(
-          n => n !== 'constructor' && typeof proto[n] === 'function'
-        ) : [];
-        console.log('[grist-api] Table prototype methods:', protoMethods);
-        console.log('[grist-api] Table own props:', Object.keys(table));
+        const protoKeys = proto ? Object.getOwnPropertyNames(proto) : [];
+        console.log('[grist-api] getTable() proto keys:', protoKeys.join(', '));
 
-        for (const key of ['tableId', '_tableId', 'id', 'tableName', '_tableName', 'name']) {
-          if (table[key] && typeof table[key] === 'string' && !table[key].startsWith('_')) {
-            console.log(`[grist-api] Found tableId via .${key}:`, table[key]);
-            _linkedTableIdCache = table[key];
-            return table[key];
+        for (const key of ['tableId', '_tableId', 'id', 'tableName', 'name']) {
+          if (table[key] !== undefined && table[key] !== null) {
+            console.log(`[grist-api] getTable().${key} =`, table[key], typeof table[key]);
+            if (typeof table[key] === 'string' && table[key].length > 0) {
+              _linkedTableIdCache = table[key];
+              return table[key];
+            }
           }
         }
 
         for (const key of Object.keys(table)) {
           const val = table[key];
-          if (typeof val === 'string' && val.length > 0 && val.length < 100 && !key.startsWith('_')) {
-            console.log(`[grist-api] Possible tableId via .${key}:`, val);
-          }
+          console.log(`[grist-api] getTable().${key}:`, typeof val, val?.constructor?.name || String(val).slice(0, 50));
         }
 
         if (typeof table.fetch === 'function') {
+          console.log('[grist-api] table.fetch is a function, trying...');
           try {
             const data = await table.fetch();
-            if (data && data.tableId) {
-              _linkedTableIdCache = data.tableId;
-              return data.tableId;
+            console.log('[grist-api] table.fetch() result keys:', data ? Object.keys(data) : 'null');
+            if (data) {
+              if (data.tableId) {
+                _linkedTableIdCache = data.tableId;
+                console.log('[grist-api] Found tableId via fetch():', data.tableId);
+                return data.tableId;
+              }
+              console.log('[grist-api] table.fetch() colInfo keys:', data.colInfo ? Object.keys(data.colInfo).length : 'none');
+              console.log('[grist-api] table.fetch() records:', data.records?.length || 0);
             }
           } catch (e) {
             console.log('[grist-api] table.fetch() error:', e.message);
           }
         }
       }
+    } catch (e) {
+      console.log('[grist-api] getTable() error:', e.message);
     }
-  } catch (e) {
-    console.log('[grist-api] getTable() error:', e.message);
+  } else {
+    console.log('[grist-api] g.getTable is NOT a function');
   }
 
-  try {
-    if (g.selectedTable) {
+  if (g.selectedTable) {
+    try {
       const st = g.selectedTable;
+      console.log('[grist-api] selectedTable type:', typeof st, st?.constructor?.name);
       if (typeof st === 'string') {
         _linkedTableIdCache = st;
         return st;
       }
       if (st && typeof st === 'object') {
+        const proto = Object.getPrototypeOf(st);
+        console.log('[grist-api] selectedTable proto keys:', proto ? Object.getOwnPropertyNames(proto).join(', ') : 'none');
+        console.log('[grist-api] selectedTable own keys:', Object.keys(st));
         for (const key of ['tableId', '_tableId', 'id']) {
           if (st[key] && typeof st[key] === 'string') {
             _linkedTableIdCache = st[key];
+            console.log(`[grist-api] Found via selectedTable.${key}:`, st[key]);
             return st[key];
           }
         }
       }
+    } catch (e) {
+      console.log('[grist-api] selectedTable error:', e.message);
     }
-  } catch (e) {}
+  }
 
+  console.log('[grist-api] Trying record-based table detection...');
   try {
-    const record = _currentRecord || (typeof g.fetchSelectedRecord === 'function' ? await g.fetchSelectedRecord() : null);
+    let record = _currentRecord;
+    if (!record && typeof g.fetchSelectedRecord === 'function') {
+      record = await g.fetchSelectedRecord();
+    }
+    console.log('[grist-api] current record:', record ? `id=${record.id}` : 'null');
+
     if (record && record.id && g.docApi) {
       const tables = await listTables();
-      console.log('[grist-api] Searching record id', record.id, 'in', tables.length, 'tables');
+      const userTables = tables.filter(t => !t.startsWith('_grist_'));
+      console.log('[grist-api] Searching in', userTables.length, 'user tables');
 
-      for (const tableId of tables) {
-        if (tableId.startsWith('_grist_')) continue;
+      const checkPromises = userTables.map(async (tableId) => {
         try {
           const result = await g.docApi.executeSQL({
             sql: `SELECT id FROM ${escapeSqlIdentifier(tableId)} WHERE id = ${record.id} LIMIT 1`
           });
           if (result && result.records && result.records.length > 0) {
-            console.log('[grist-api] Found record in table:', tableId);
-            _linkedTableIdCache = tableId;
             return tableId;
           }
         } catch (e) {}
+        return null;
+      });
+
+      const results = await Promise.all(checkPromises);
+      const found = results.find(r => r !== null);
+      if (found) {
+        console.log('[grist-api] Found table via record matching:', found);
+        _linkedTableIdCache = found;
+        return found;
       }
     }
   } catch (e) {
-    console.log('[grist-api] record search error:', e.message);
+    console.log('[grist-api] Record matching error:', e.message);
   }
 
-  console.log('[grist-api] getLinkedTableId: returning null');
+  console.log('[grist-api] === getLinkedTableId: returning null ===');
   return null;
-}
-
-export async function getAllTablesWithColumns() {
-  if (_allTablesColumnsCache) return _allTablesColumnsCache;
-
-  const g = getGrist();
-  if (!g || !g.docApi) return {};
-
-  console.log('[grist-api] getAllTablesWithColumns: start');
-
-  const result = {};
-
-  try {
-    const sql = `
-      SELECT t.id as table_id, c.id as col_id, c.label as col_label, c.type as col_type, c.parentPos
-      FROM _grist_Tables t
-      LEFT JOIN _grist_Tables_column c ON c.tableRef = t.id
-      WHERE t.id NOT LIKE '_grist_%'
-      ORDER BY t.id, c.parentPos
-    `;
-    const res = await g.docApi.executeSQL({ sql });
-    if (res && res.records) {
-      for (const r of res.records) {
-        const tid = r.fields.table_id;
-        if (!result[tid]) result[tid] = [];
-        if (r.fields.col_id) {
-          result[tid].push({
-            id: r.fields.col_id,
-            label: r.fields.col_label || r.fields.col_id,
-            type: r.fields.col_type || 'Any',
-          });
-        }
-      }
-      console.log('[grist-api] getAllTablesWithColumns SQL:', Object.keys(result).length, 'tables');
-    }
-  } catch (e) {
-    console.log('[grist-api] getAllTablesWithColumns SQL failed:', e.message);
-  }
-
-  if (Object.keys(result).length === 0) {
-    const tables = await listTables();
-    for (const tableId of tables) {
-      if (tableId.startsWith('_grist_')) continue;
-      try {
-        const cols = await getTableStructure(tableId);
-        if (cols.length > 0) result[tableId] = cols;
-      } catch (e) {}
-    }
-  }
-
-  _allTablesColumnsCache = result;
-  return result;
 }
 
 export async function getLinkedTableColumns() {
@@ -294,65 +271,85 @@ export async function getLinkedTableColumns() {
   const g = getGrist();
   if (!g) return [];
 
-  console.log('[grist-api] getLinkedTableColumns: start');
+  console.log('[grist-api] === getLinkedTableColumns: start ===');
 
-  try {
-    if (typeof g.getTable === 'function') {
-      const table = await g.getTable();
+  const tableId = await getLinkedTableId();
+  console.log('[grist-api] Linked table ID:', tableId);
+
+  if (tableId) {
+    const cols = await getTableStructure(tableId);
+    if (cols.length > 0) {
+      console.log('[grist-api] getLinkedTableColumns via getTableStructure:', cols.length);
+      _linkedColumnsCache = cols;
+      return cols;
+    }
+  }
+
+  if (typeof g.getTable === 'function') {
+    try {
+      const table = g.getTable();
       if (table && typeof table.fetch === 'function') {
         const data = await table.fetch();
         if (data) {
-          const colInfo = data.colInfo || data.fields || {};
+          if (data.colInfo && typeof data.colInfo === 'object') {
+            const cols = Object.entries(data.colInfo).map(([id, col]) => ({
+              id,
+              label: col.label || id,
+              type: col.type || 'Any',
+            }));
+            if (cols.length > 0) {
+              console.log('[grist-api] getLinkedTableColumns via table.fetch() colInfo:', cols.length);
+              _linkedColumnsCache = cols;
+              return cols;
+            }
+          }
+          if (data.records && data.records.length > 0 && data.records[0].fields) {
+            const cols = Object.keys(data.records[0].fields).map(id => ({
+              id, label: id, type: 'Any'
+            }));
+            console.log('[grist-api] getLinkedTableColumns via table.fetch() records:', cols.length);
+            _linkedColumnsCache = cols;
+            return cols;
+          }
+        }
+      }
+    } catch (e) {
+      console.log('[grist-api] getLinkedTableColumns table.fetch() error:', e.message);
+    }
+  }
+
+  if (tableId && g.docApi) {
+    try {
+      const data = await g.docApi.fetchTable(tableId);
+      if (data) {
+        const colInfo = data.colInfo || data.fields;
+        if (colInfo && typeof colInfo === 'object') {
           const cols = Object.entries(colInfo).map(([id, col]) => ({
             id,
             label: col.label || id,
             type: col.type || 'Any',
           }));
           if (cols.length > 0) {
-            console.log('[grist-api] getLinkedTableColumns via table.fetch() colInfo:', cols.length);
+            console.log('[grist-api] getLinkedTableColumns via fetchTable colInfo:', cols.length);
             _linkedColumnsCache = cols;
             return cols;
           }
-          if (data.records && data.records.length > 0 && data.records[0].fields) {
-            const cols2 = Object.keys(data.records[0].fields).map(id => ({
-              id, label: id, type: 'Any'
-            }));
-            console.log('[grist-api] getLinkedTableColumns via table.fetch() records:', cols2.length);
-            _linkedColumnsCache = cols2;
-            return cols2;
-          }
+        }
+        if (data.records && data.records.length > 0 && data.records[0].fields) {
+          const cols = Object.keys(data.records[0].fields).map(id => ({
+            id, label: id, type: 'Any'
+          }));
+          console.log('[grist-api] getLinkedTableColumns via fetchTable records:', cols.length);
+          _linkedColumnsCache = cols;
+          return cols;
         }
       }
+    } catch (e) {
+      console.log('[grist-api] getLinkedTableColumns fetchTable error:', e.message);
     }
-  } catch (e) {
-    console.log('[grist-api] getLinkedTableColumns table.fetch() error:', e.message);
   }
 
-  const tableId = await getLinkedTableId();
-  if (tableId) {
-    console.log('[grist-api] getLinkedTableColumns via tableId:', tableId);
-    const cols = await getTableStructure(tableId);
-    _linkedColumnsCache = cols;
-    return cols;
-  }
-
-  try {
-    const allTables = await getAllTablesWithColumns();
-    const linkedId = await getLinkedTableId();
-    if (linkedId && allTables[linkedId]) {
-      _linkedColumnsCache = allTables[linkedId];
-      return allTables[linkedId];
-    }
-    const tableIds = Object.keys(allTables);
-    if (tableIds.length === 1) {
-      _linkedColumnsCache = allTables[tableIds[0]];
-      return allTables[tableIds[0]];
-    }
-  } catch (e) {
-    console.log('[grist-api] getLinkedTableColumns fallback error:', e.message);
-  }
-
-  console.log('[grist-api] getLinkedTableColumns: returning empty');
+  console.log('[grist-api] === getLinkedTableColumns: returning empty ===');
   return [];
 }
 
@@ -361,9 +358,16 @@ export async function fetchLinkedTableData(options = {}) {
   const g = getGrist();
   if (!g) return { records: [], fields: {} };
 
-  try {
-    if (typeof g.getTable === 'function') {
-      const table = await g.getTable();
+  const tableId = await getLinkedTableId();
+  console.log('[grist-api] fetchLinkedTableData for table:', tableId);
+
+  if (tableId) {
+    return fetchTableData(tableId, options);
+  }
+
+  if (typeof g.getTable === 'function') {
+    try {
+      const table = g.getTable();
       if (table && typeof table.fetch === 'function') {
         let data = await table.fetch();
         if (data && data.records) {
@@ -423,17 +427,65 @@ export async function fetchLinkedTableData(options = {}) {
           };
         }
       }
+    } catch (e) {
+      console.log('[grist-api] fetchLinkedTableData table.fetch() error:', e.message);
     }
-  } catch (e) {
-    console.log('[grist-api] fetchLinkedTableData table.fetch() error:', e.message);
-  }
-
-  const tableId = await getLinkedTableId();
-  if (tableId) {
-    return fetchTableData(tableId, options);
   }
 
   return { records: [], fields: {} };
+}
+
+export async function getAllTablesWithColumns() {
+  if (_allTablesColumnsCache) return _allTablesColumnsCache;
+
+  const g = getGrist();
+  if (!g || !g.docApi) return {};
+
+  console.log('[grist-api] getAllTablesWithColumns: start');
+
+  const result = {};
+
+  try {
+    const sql = `
+      SELECT t.id as table_id, c.id as col_id, c.label as col_label, c.type as col_type, c.parentPos
+      FROM _grist_Tables t
+      LEFT JOIN _grist_Tables_column c ON c.tableRef = t.id
+      WHERE t.id NOT LIKE '_grist_%'
+      ORDER BY t.id, c.parentPos
+    `;
+    const res = await g.docApi.executeSQL({ sql });
+    if (res && res.records) {
+      for (const r of res.records) {
+        const tid = r.fields.table_id;
+        if (!result[tid]) result[tid] = [];
+        if (r.fields.col_id) {
+          result[tid].push({
+            id: r.fields.col_id,
+            label: r.fields.col_label || r.fields.col_id,
+            type: r.fields.col_type || 'Any',
+          });
+        }
+      }
+      console.log('[grist-api] getAllTablesWithColumns SQL:', Object.keys(result).length, 'tables with', 
+        Object.values(result).reduce((a, b) => a + b.length, 0), 'total columns');
+    }
+  } catch (e) {
+    console.log('[grist-api] getAllTablesWithColumns SQL failed:', e.message);
+  }
+
+  if (Object.keys(result).length === 0) {
+    const tables = await listTables();
+    for (const tableId of tables) {
+      if (tableId.startsWith('_grist_')) continue;
+      try {
+        const cols = await getTableStructure(tableId);
+        if (cols.length > 0) result[tableId] = cols;
+      } catch (e) {}
+    }
+  }
+
+  _allTablesColumnsCache = result;
+  return result;
 }
 
 export async function getTableStructure(tableId) {

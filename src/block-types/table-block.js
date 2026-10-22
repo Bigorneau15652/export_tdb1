@@ -1,5 +1,5 @@
 import { createEl, formatNumber, aggregate } from '../utils.js';
-import { fetchTableData, fetchLinkedTableData, getTableStructure, getLinkedTableColumns, listTables, getAllTablesWithColumns } from '../grist-api.js';
+import { fetchTableData, fetchLinkedTableData, getTableStructure, getLinkedTableColumns, listTables, getAllTablesWithColumns, getLinkedTableId } from '../grist-api.js';
 
 const AGGREGATION_FUNCS = [
   { value: 'sum', label: 'Somme' },
@@ -16,7 +16,7 @@ export async function renderTableBlock(block, container, store) {
   const cfg = block.config;
 
   if (!cfg.columns || cfg.columns.length === 0) {
-    container.appendChild(createEl('div', 'dc-block-placeholder', '⚙️ Configurez le tableau : choisissez les colonnes à afficher'));
+    container.appendChild(createEl('div', 'dc-block-placeholder', '⚙️ Configurez le tableau : cochez les colonnes à afficher'));
     return { update: async () => {}, destroy() {} };
   }
 
@@ -32,9 +32,6 @@ export async function renderTableBlock(block, container, store) {
   const tfoot = createEl('tfoot');
 
   const headerRow = createEl('tr');
-  if (cfg.rowAggregation) {
-    headerRow.appendChild(createEl('th', 'dc-th dc-th-first', ''));
-  }
   cfg.columns.forEach(col => {
     headerRow.appendChild(createEl('th', 'dc-th', col.label || col.id));
   });
@@ -46,6 +43,9 @@ export async function renderTableBlock(block, container, store) {
 
   tableEl.appendChild(thead);
   tableEl.appendChild(tbody);
+  if (cfg.footerFunc) {
+    tableEl.appendChild(tfoot);
+  }
 
   wrapper.appendChild(tableEl);
   container.appendChild(wrapper);
@@ -53,7 +53,6 @@ export async function renderTableBlock(block, container, store) {
   async function update() {
     tbody.innerHTML = '';
     tfoot.innerHTML = '';
-    tableEl.appendChild(tfoot);
 
     let currentData;
     try {
@@ -63,12 +62,16 @@ export async function renderTableBlock(block, container, store) {
           filters: cfg.filters,
           sorts: cfg.sorts,
         });
-      } else {
+      } else if (cfg.sourceTable) {
         currentData = await fetchTableData(cfg.sourceTable, {
           columns: cfg.columns.map(c => c.id),
           filters: cfg.filters,
           sorts: cfg.sorts,
         });
+      } else {
+        container.innerHTML = '';
+        container.appendChild(createEl('div', 'dc-block-error', '⚠️ Aucune table source configurée'));
+        return;
       }
     } catch (e) {
       container.innerHTML = '';
@@ -80,9 +83,6 @@ export async function renderTableBlock(block, container, store) {
 
     for (const rec of records) {
       const row = createEl('tr', 'dc-tr');
-      if (cfg.rowAggregation) {
-        row.appendChild(createEl('td', 'dc-td dc-td-first', ''));
-      }
       cfg.columns.forEach(col => {
         const val = rec.fields[col.id];
         const cell = createEl('td', 'dc-td');
@@ -100,28 +100,31 @@ export async function renderTableBlock(block, container, store) {
 
     if (cfg.footerFunc) {
       const footerRow = createEl('tr', 'dc-tr-footer');
-      const labelCell = createEl('td', 'dc-td-footer-label', cfg.footerLabel || 'Total');
-      footerRow.appendChild(labelCell);
-
-      cfg.columns.forEach((col, i) => {
-        if (i === 0 && !cfg.rowAggregation) return;
-        const values = records.map(r => r.fields[col.id]);
-        const agg = aggregate(values, cfg.footerFunc);
-        const cell = createEl('td', 'dc-td-footer', formatNumber(agg));
-        footerRow.appendChild(cell);
-      });
 
       if (cfg.rowAggregation) {
+        footerRow.appendChild(createEl('td', 'dc-td-footer-label', cfg.footerLabel || 'Total'));
+        cfg.columns.forEach(col => {
+          const values = records.map(r => r.fields[col.id]);
+          const agg = aggregate(values, cfg.footerFunc);
+          footerRow.appendChild(createEl('td', 'dc-td-footer', formatNumber(agg)));
+        });
         const allRowAggs = records.map(rec => {
           const rowVals = cfg.columns.map(c => rec.fields[c.id]);
           return aggregate(rowVals, cfg.rowAggregationFunc);
         });
         const totalAgg = aggregate(allRowAggs, cfg.footerFunc);
-        footerRow.appendChild(createEl('td', 'dc-td-footer', formatNumber(totalAgg)));
-      } else if (cfg.columns.length > 1) {
+        footerRow.appendChild(createEl('td', 'dc-td-footer dc-td-footer-last', formatNumber(totalAgg)));
+      } else {
+        const firstCol = cfg.columns[0];
+        footerRow.appendChild(createEl('td', 'dc-td-footer-label', cfg.footerLabel || 'Total'));
         for (let i = 1; i < cfg.columns.length; i++) {
           const col = cfg.columns[i];
           const values = records.map(r => r.fields[col.id]);
+          const agg = aggregate(values, cfg.footerFunc);
+          footerRow.appendChild(createEl('td', 'dc-td-footer', formatNumber(agg)));
+        }
+        if (cfg.columns.length === 1) {
+          const values = records.map(r => r.fields[firstCol.id]);
           const agg = aggregate(values, cfg.footerFunc);
           footerRow.appendChild(createEl('td', 'dc-td-footer', formatNumber(agg)));
         }
@@ -168,55 +171,147 @@ export async function createTableEditor(block, onChange, store) {
   editor.appendChild(nameLabel);
   editor.appendChild(nameInput);
 
-  const columnsLabel = createEl('label', 'dc-label', 'Colonnes à afficher (cochez celles qui vous intéressent)');
+  const columnsLabel = createEl('label', 'dc-label', 'Colonnes à afficher');
   editor.appendChild(columnsLabel);
 
   const columnsContainer = createEl('div', 'dc-columns-selector');
   columnsContainer.appendChild(createEl('p', 'dc-hint', '⏳ Chargement des colonnes...'));
   editor.appendChild(columnsContainer);
 
+  const footerSection = createEl('div', 'dc-footer-section');
+  footerSection.style.cssText = 'margin-top:16px;padding-top:12px;border-top:1px solid #ddd;';
+
+  const footerEnabledLabel = createEl('label', 'dc-checkbox-label');
+  const footerEnabledCb = createEl('input');
+  footerEnabledCb.type = 'checkbox';
+  footerEnabledCb.checked = !!cfg.footerFunc;
+  footerEnabledCb.addEventListener('change', () => {
+    onChange({ footerFunc: footerEnabledCb.checked ? (cfg.footerFunc || 'sum') : null });
+  });
+  footerEnabledLabel.appendChild(footerEnabledCb);
+  footerEnabledLabel.appendChild(createEl('span', '', ' Ajouter une ligne de total en bas du tableau'));
+  footerSection.appendChild(footerEnabledLabel);
+
+  const footerConfig = createEl('div', 'dc-footer-config');
+  footerConfig.style.cssText = 'margin-left:20px;margin-top:8px;';
+
+  const footerLabelInput = createEl('input', 'dc-input dc-input-full');
+  footerLabelInput.type = 'text';
+  footerLabelInput.placeholder = 'Nom de la ligne (ex: Total)';
+  footerLabelInput.value = cfg.footerLabel || 'Total';
+  footerLabelInput.addEventListener('input', () => onChange({ footerLabel: footerLabelInput.value }));
+
+  const footerFuncSelect = createEl('select', 'dc-select dc-select-full');
+  AGGREGATION_FUNCS.forEach(f => {
+    const opt = createEl('option', '', f.label);
+    opt.value = f.value;
+    footerFuncSelect.appendChild(opt);
+  });
+  footerFuncSelect.value = cfg.footerFunc || 'sum';
+  footerFuncSelect.addEventListener('change', () => onChange({ footerFunc: footerFuncSelect.value }));
+
+  footerConfig.appendChild(createEl('label', 'dc-label', 'Nom de la ligne de total'));
+  footerConfig.appendChild(footerLabelInput);
+  footerConfig.appendChild(createEl('label', 'dc-label', 'Fonction d\'agrégation'));
+  footerConfig.appendChild(footerFuncSelect);
+  footerSection.appendChild(footerConfig);
+
+  const rowAggLabel = createEl('label', 'dc-checkbox-label');
+  rowAggLabel.style.cssText = 'margin-top:12px;display:flex;align-items:center;gap:6px;';
+  const rowAggCb = createEl('input');
+  rowAggCb.type = 'checkbox';
+  rowAggCb.checked = cfg.rowAggregation || false;
+  rowAggCb.addEventListener('change', () => onChange({ rowAggregation: rowAggCb.checked }));
+  rowAggLabel.appendChild(rowAggCb);
+  rowAggLabel.appendChild(createEl('span', '', ' Ajouter une colonne de droite (agrégation par ligne)'));
+  footerSection.appendChild(rowAggLabel);
+
+  const rowAggConfig = createEl('div', 'dc-rowagg-config');
+  rowAggConfig.style.cssText = 'margin-left:20px;margin-top:8px;';
+
+  const rowAggFuncSelect = createEl('select', 'dc-select dc-select-full');
+  AGGREGATION_FUNCS.forEach(f => {
+    const opt = createEl('option', '', f.label);
+    opt.value = f.value;
+    rowAggFuncSelect.appendChild(opt);
+  });
+  rowAggFuncSelect.value = cfg.rowAggregationFunc || 'sum';
+  rowAggFuncSelect.addEventListener('change', () => onChange({ rowAggregationFunc: rowAggFuncSelect.value }));
+
+  rowAggConfig.appendChild(createEl('label', 'dc-label', 'Fonction pour la colonne de droite'));
+  rowAggConfig.appendChild(rowAggFuncSelect);
+  footerSection.appendChild(rowAggConfig);
+
+  editor.appendChild(footerSection);
+
+  function updateFooterVisibility() {
+    footerConfig.style.display = footerEnabledCb.checked ? 'block' : 'none';
+  }
+  function updateRowAggVisibility() {
+    rowAggConfig.style.display = rowAggCb.checked ? 'block' : 'none';
+  }
+  footerEnabledCb.addEventListener('change', updateFooterVisibility);
+  rowAggCb.addEventListener('change', updateRowAggVisibility);
+  updateFooterVisibility();
+  updateRowAggVisibility();
+
   async function loadAndRenderColumns() {
     columnsContainer.innerHTML = '';
     columnsContainer.appendChild(createEl('p', 'dc-hint', '⏳ Chargement des colonnes...'));
 
     let columns = [];
+    let usedTableId = null;
 
     if (cfg.useLinkedTable !== false) {
-      columns = await getLinkedTableColumns();
-      console.log('[table-block] Linked table columns:', columns.length);
+      const linkedId = await getLinkedTableId();
+      console.log('[table-block] Linked table ID:', linkedId);
+      if (linkedId) {
+        columns = await getTableStructure(linkedId);
+        usedTableId = linkedId;
+        console.log('[table-block] Columns from linked table:', columns.length);
+      }
     }
 
     if (columns.length === 0 && cfg.sourceTable) {
       columns = await getTableStructure(cfg.sourceTable);
-      console.log('[table-block] Source table columns:', columns.length);
+      usedTableId = cfg.sourceTable;
+      console.log('[table-block] Columns from sourceTable:', columns.length);
     }
 
     if (columns.length === 0) {
-      columnsContainer.innerHTML = '';
-      columnsContainer.appendChild(createEl('p', 'dc-hint dc-hint-error',
-        '⚠️ Impossible de charger les colonnes. Essayez de sélectionner une autre table ci-dessous.'));
+      columns = await getLinkedTableColumns();
+      console.log('[table-block] Columns from getLinkedTableColumns:', columns.length);
+    }
 
+    if (columns.length === 0) {
       const allTables = await getAllTablesWithColumns();
       const tableIds = Object.keys(allTables);
+      console.log('[table-block] All tables:', tableIds);
 
       if (tableIds.length > 0) {
-        const altLabel = createEl('label', 'dc-label', 'Ou choisir une autre table:');
-        const altSelect = createEl('select', 'dc-select dc-select-full');
-        altSelect.appendChild(createEl('option', '', '— Choisir une table —'));
+        columnsContainer.innerHTML = '';
+        columnsContainer.appendChild(createEl('p', 'dc-hint dc-hint-error',
+          '⚠️ Impossible de détecter automatiquement la table liée. Veuillez choisir une table :'));
+
+        const tableSelect = createEl('select', 'dc-select dc-select-full');
+        tableSelect.appendChild(createEl('option', '', '— Choisir une table —'));
         tableIds.forEach(tid => {
           const opt = createEl('option', '', tid);
           opt.value = tid;
-          altSelect.appendChild(opt);
+          tableSelect.appendChild(opt);
         });
-        altSelect.addEventListener('change', async () => {
-          if (altSelect.value) {
-            onChange({ sourceTable: altSelect.value, useLinkedTable: false });
-            const cols = allTables[altSelect.value] || await getTableStructure(altSelect.value);
+        tableSelect.addEventListener('change', async () => {
+          if (tableSelect.value) {
+            onChange({ sourceTable: tableSelect.value, useLinkedTable: false });
+            const cols = allTables[tableSelect.value] || await getTableStructure(tableSelect.value);
             renderColumns(cols);
           }
         });
-        columnsContainer.appendChild(altLabel);
-        columnsContainer.appendChild(altSelect);
+        columnsContainer.appendChild(tableSelect);
+      } else {
+        columnsContainer.innerHTML = '';
+        columnsContainer.appendChild(createEl('p', 'dc-hint dc-hint-error',
+          '⚠️ Aucune table trouvée dans ce document.'));
       }
       return;
     }
@@ -252,54 +347,6 @@ export async function createTableEditor(block, onChange, store) {
       columnsContainer.appendChild(label);
     });
   }
-
-  const footerSection = createEl('div', 'dc-footer-section');
-  footerSection.style.cssText = 'margin-top:16px;padding-top:12px;border-top:1px solid #ddd;';
-
-  const footerLabel = createEl('label', 'dc-label', 'Ligne de total en bas du tableau');
-  const footerLabelInput = createEl('input', 'dc-input dc-input-full');
-  footerLabelInput.type = 'text';
-  footerLabelInput.placeholder = 'Ex: Total';
-  footerLabelInput.value = cfg.footerLabel || 'Total';
-  footerLabelInput.addEventListener('input', () => onChange({ footerLabel: footerLabelInput.value }));
-
-  const footerFuncLabel = createEl('label', 'dc-label', 'Fonction d\'agrégation (ligne de pied)');
-  const footerFuncSelect = createEl('select', 'dc-select dc-select-full');
-  AGGREGATION_FUNCS.forEach(f => {
-    const opt = createEl('option', '', f.label);
-    opt.value = f.value;
-    footerFuncSelect.appendChild(opt);
-  });
-  footerFuncSelect.value = cfg.footerFunc || 'sum';
-  footerFuncSelect.addEventListener('change', () => onChange({ footerFunc: footerFuncSelect.value }));
-
-  const rowAggLabel = createEl('label', 'dc-checkbox-label');
-  const rowAggCb = createEl('input');
-  rowAggCb.type = 'checkbox';
-  rowAggCb.checked = cfg.rowAggregation || false;
-  rowAggCb.addEventListener('change', () => onChange({ rowAggregation: rowAggCb.checked }));
-  rowAggLabel.appendChild(rowAggCb);
-  rowAggLabel.appendChild(createEl('span', '', ' Ajouter une colonne de droite (agrégation par ligne)'));
-
-  const rowAggFuncSelect = createEl('select', 'dc-select dc-select-full');
-  AGGREGATION_FUNCS.forEach(f => {
-    const opt = createEl('option', '', f.label);
-    opt.value = f.value;
-    rowAggFuncSelect.appendChild(opt);
-  });
-  rowAggFuncSelect.value = cfg.rowAggregationFunc || 'sum';
-  rowAggFuncSelect.addEventListener('change', () => onChange({ rowAggregationFunc: rowAggFuncSelect.value }));
-
-  footerSection.appendChild(footerLabel);
-  footerSection.appendChild(createEl('label', 'dc-label', 'Nom de la ligne de total'));
-  footerSection.appendChild(footerLabelInput);
-  footerSection.appendChild(footerFuncLabel);
-  footerSection.appendChild(footerFuncSelect);
-  footerSection.appendChild(rowAggLabel);
-  footerSection.appendChild(createEl('label', 'dc-label', 'Fonction pour la colonne de droite'));
-  footerSection.appendChild(rowAggFuncSelect);
-
-  editor.appendChild(footerSection);
 
   await loadAndRenderColumns();
 

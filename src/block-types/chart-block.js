@@ -1,7 +1,7 @@
 import * as echarts from 'echarts';
 import 'echarts-gl';
 import { createEl } from '../utils.js';
-import { fetchTableData, fetchLinkedTableData, getTableStructure, getLinkedTableColumns, listTables, getAllTablesWithColumns } from '../grist-api.js';
+import { fetchTableData, fetchLinkedTableData, getTableStructure, getLinkedTableColumns, listTables, getAllTablesWithColumns, getLinkedTableId } from '../grist-api.js';
 import { getPaletteColors, PALETTES } from '../palettes.js';
 
 const CHART_TYPES = [
@@ -46,7 +46,7 @@ export async function renderChartBlock(block, container, store) {
           filters: cfg.filters,
           sorts: cfg.sorts,
         });
-      } else {
+      } else if (cfg.sourceTable) {
         data = await fetchTableData(cfg.sourceTable, {
           columns: [cfg.xColumn, ...cfg.yColumns],
           filters: cfg.filters,
@@ -54,7 +54,7 @@ export async function renderChartBlock(block, container, store) {
         });
       }
 
-      const records = data.records;
+      const records = (data && data.records) || [];
       const colors = getPaletteColors(cfg.palette);
 
       const categories = records.map(r => formatCategory(r.fields[cfg.xColumn]));
@@ -297,6 +297,13 @@ export async function createChartEditor(block, onChange, store) {
   editor.appendChild(titleLabel);
   editor.appendChild(titleInput);
 
+  const tableSection = createEl('div', 'dc-table-section');
+  const tableLabel = createEl('label', 'dc-label', 'Table source');
+  const tableSelect = createEl('select', 'dc-select dc-select-full');
+  tableSection.appendChild(tableLabel);
+  tableSection.appendChild(tableSelect);
+  editor.appendChild(tableSection);
+
   const xColLabel = createEl('label', 'dc-label', 'Colonne X (catégories / libellés)');
   const xColSelect = createEl('select', 'dc-select dc-select-full');
   editor.appendChild(xColLabel);
@@ -320,6 +327,7 @@ export async function createChartEditor(block, onChange, store) {
   editor.appendChild(paletteSelect);
 
   let availableColumns = [];
+  let allTablesData = {};
 
   function renderColumnSelectors() {
     xColSelect.innerHTML = '';
@@ -353,59 +361,53 @@ export async function createChartEditor(block, onChange, store) {
 
   xColSelect.addEventListener('change', () => onChange({ xColumn: xColSelect.value }));
 
-  yColContainer.appendChild(createEl('p', 'dc-hint', '⏳ Chargement des colonnes...'));
-  xColSelect.appendChild(createEl('option', '', '⏳ Chargement...'));
+  async function loadTables() {
+    tableSelect.innerHTML = '';
+    tableSelect.appendChild(createEl('option', '', '⏳ Chargement...'));
 
-  async function loadColumns() {
-    let columns = [];
+    allTablesData = await getAllTablesWithColumns();
+    const tableIds = Object.keys(allTablesData);
+    console.log('[chart-block] Tables loaded:', tableIds);
 
-    if (cfg.useLinkedTable !== false) {
-      columns = await getLinkedTableColumns();
-      console.log('[chart-block] Linked table columns:', columns.length);
-    }
+    const linkedId = await getLinkedTableId();
+    console.log('[chart-block] Linked table ID:', linkedId);
 
-    if (columns.length === 0 && cfg.sourceTable) {
-      columns = await getTableStructure(cfg.sourceTable);
-    }
+    tableSelect.innerHTML = '';
+    tableSelect.appendChild(createEl('option', '', '— Choisir une table —'));
+    tableIds.forEach(tid => {
+      const opt = createEl('option', '', tid);
+      opt.value = tid;
+      tableSelect.appendChild(opt);
+    });
 
-    if (columns.length === 0) {
-      columns = await getLinkedTableColumns();
-    }
-
-    availableColumns = columns;
-    renderColumnSelectors();
-
-    if (availableColumns.length === 0) {
-      yColContainer.innerHTML = '';
-      yColContainer.appendChild(createEl('p', 'dc-hint dc-hint-error',
-        '⚠️ Impossible de charger les colonnes. Essayez de choisir une autre table.'));
-
-      const allTables = await getAllTablesWithColumns();
-      const tableIds = Object.keys(allTables);
-      if (tableIds.length > 0) {
-        const altLabel = createEl('label', 'dc-label', 'Choisir une autre table:');
-        const altSelect = createEl('select', 'dc-select dc-select-full');
-        altSelect.appendChild(createEl('option', '', '— Choisir —'));
-        tableIds.forEach(tid => {
-          const opt = createEl('option', '', tid);
-          opt.value = tid;
-          altSelect.appendChild(opt);
-        });
-        altSelect.addEventListener('change', async () => {
-          if (altSelect.value) {
-            onChange({ sourceTable: altSelect.value, useLinkedTable: false, xColumn: null, yColumns: [] });
-            const cols = allTables[altSelect.value] || await getTableStructure(altSelect.value);
-            availableColumns = cols;
-            renderColumnSelectors();
-          }
-        });
-        yColContainer.appendChild(altLabel);
-        yColContainer.appendChild(altSelect);
-      }
+    if (cfg.sourceTable && tableIds.includes(cfg.sourceTable)) {
+      tableSelect.value = cfg.sourceTable;
+      availableColumns = allTablesData[cfg.sourceTable] || [];
+      renderColumnSelectors();
+    } else if (linkedId && tableIds.includes(linkedId)) {
+      tableSelect.value = linkedId;
+      availableColumns = allTablesData[linkedId] || [];
+      renderColumnSelectors();
+      onChange({ sourceTable: linkedId, useLinkedTable: true });
+    } else if (tableIds.length > 0) {
+      availableColumns = [];
+      renderColumnSelectors();
     }
   }
 
-  await loadColumns();
+  tableSelect.addEventListener('change', async () => {
+    const tid = tableSelect.value;
+    if (!tid) {
+      availableColumns = [];
+      renderColumnSelectors();
+      return;
+    }
+    onChange({ sourceTable: tid, useLinkedTable: false, xColumn: null, yColumns: [] });
+    availableColumns = allTablesData[tid] || await getTableStructure(tid);
+    renderColumnSelectors();
+  });
+
+  await loadTables();
 
   return editor;
 }
