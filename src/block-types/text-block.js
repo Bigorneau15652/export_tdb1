@@ -1,7 +1,7 @@
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
-import { createEl, sanitizeHtml, debounce } from '../utils.js';
-import { fetchTableData, listTables, getTableStructure, getSelectedTableId } from '../grist-api.js';
+import { createEl, debounce } from '../utils.js';
+import { fetchLinkedTableData, fetchTableData, getLinkedTableColumns, getTableStructure, getAllTablesWithColumns } from '../grist-api.js';
 
 marked.setOptions({
   breaks: true,
@@ -18,13 +18,20 @@ export function renderTextBlock(block, container, store) {
   async function update() {
     let markdown = block.config.markdown || '';
 
-    if (block.config.linkedTable && block.config.linkedColumn && store.currentRecord) {
+    if (block.config.linkedColumn && store.currentRecord) {
       try {
-        const data = await fetchTableData(block.config.linkedTable, { limit: 1000 });
-        const rec = data.records.find(r => r.id === store.currentRecord.id);
-        if (rec && rec.fields[block.config.linkedColumn]) {
-          const val = rec.fields[block.config.linkedColumn];
-          markdown = typeof val === 'string' ? val : JSON.stringify(val);
+        let data;
+        if (block.config.useLinkedTable !== false) {
+          data = await fetchLinkedTableData({ limit: 1000 });
+        } else if (block.config.linkedTable) {
+          data = await fetchTableData(block.config.linkedTable, { limit: 1000 });
+        }
+        if (data && data.records) {
+          const rec = data.records.find(r => r.id === store.currentRecord.id);
+          if (rec && rec.fields[block.config.linkedColumn]) {
+            const val = rec.fields[block.config.linkedColumn];
+            markdown = typeof val === 'string' ? val : JSON.stringify(val);
+          }
         }
       } catch (e) {
         console.error('[text-block] Error fetching linked data:', e);
@@ -57,11 +64,16 @@ export function renderTextBlock(block, container, store) {
 export async function createTextEditor(block, onChange, store) {
   const editor = createEl('div', 'dc-block-editor dc-text-editor');
 
+  editor.appendChild(createEl('label', 'dc-label', 'Contenu (Markdown)'));
+  editor.appendChild(createEl('p', 'dc-hint', 'Utilisez # pour un titre, **gras**, *italique*, - pour une liste...'));
+
   const textarea = createEl('textarea', 'dc-textarea');
   textarea.value = block.config.markdown || '';
-  textarea.placeholder = 'Écrivez votre texte en Markdown...\n\n# Titre\n**gras** *italique*\n- liste';
+  textarea.placeholder = 'Écrivez votre texte en Markdown...\n\n# Titre\n**gras** *italique*\n- liste à puces';
+  textarea.style.cssText = 'width:100%;min-height:120px;font-family:monospace;font-size:13px;padding:8px;';
 
   const preview = createEl('div', 'dc-text-preview');
+  preview.style.cssText = 'border:1px solid #ddd;padding:8px;margin-top:8px;min-height:40px;border-radius:4px;';
 
   const updatePreview = debounce(() => {
     const rawHtml = marked.parse(textarea.value);
@@ -74,33 +86,40 @@ export async function createTextEditor(block, onChange, store) {
   const rawHtml = marked.parse(textarea.value);
   preview.innerHTML = DOMPurify.sanitize(rawHtml);
 
+  editor.appendChild(textarea);
+  editor.appendChild(createEl('label', 'dc-label', 'Aperçu'));
+  editor.appendChild(preview);
+
   const linkSection = createEl('div', 'dc-text-link-section');
-  const linkLabel = createEl('label', 'dc-label', 'Ou lier à une colonne (texte dynamique)');
+  linkSection.style.cssText = 'margin-top:16px;padding-top:12px;border-top:1px solid #ddd;';
 
-  let tables = await listTables();
-  const selectedTableId = await getSelectedTableId();
-  if ((!tables || tables.length === 0) && selectedTableId) {
-    tables = [selectedTableId];
-  }
-
-  const tableSelect = createEl('select', 'dc-select dc-select-full');
-  tableSelect.appendChild(createEl('option', '', '— Texte statique (Markdown) —'));
-  (tables || []).forEach(t => {
-    const opt = createEl('option', '', t);
-    opt.value = t;
-    tableSelect.appendChild(opt);
-  });
-  tableSelect.value = block.config.linkedTable || '';
+  const linkLabel = createEl('label', 'dc-label', 'Ou remplacer par le contenu d\'une colonne (dynamique)');
+  linkSection.appendChild(linkLabel);
+  linkSection.appendChild(createEl('p', 'dc-hint', 'Le texte ci-dessus sera remplacé par la valeur de la colonne choisie, pour la ligne active.'));
 
   const colSelect = createEl('select', 'dc-select dc-select-full');
-  colSelect.appendChild(createEl('option', '', '— Choisir une colonne —'));
+  colSelect.appendChild(createEl('option', '', '— Texte statique (Markdown ci-dessus) —'));
 
-  async function loadColumns(tableId) {
+  async function loadColumns() {
     colSelect.innerHTML = '';
-    colSelect.appendChild(createEl('option', '', '— Choisir une colonne —'));
-    if (!tableId) return;
-    const columns = await getTableStructure(tableId);
-    console.log('[text-block] loadColumns:', columns.length, 'columns');
+    colSelect.appendChild(createEl('option', '', '— Texte statique (Markdown ci-dessus) —'));
+    colSelect.appendChild(createEl('option', '', '⏳ Chargement...'));
+
+    let columns = await getLinkedTableColumns();
+    console.log('[text-block] Linked columns:', columns.length);
+
+    if (columns.length === 0 && block.config.linkedTable) {
+      columns = await getTableStructure(block.config.linkedTable);
+    }
+
+    colSelect.innerHTML = '';
+    colSelect.appendChild(createEl('option', '', '— Texte statique (Markdown ci-dessus) —'));
+
+    if (columns.length === 0) {
+      colSelect.appendChild(createEl('option', '', '⚠️ Aucune colonne disponible'));
+      return;
+    }
+
     columns.forEach(col => {
       const opt = createEl('option', '', `${col.label || col.id} (${col.type})`);
       opt.value = col.id;
@@ -109,28 +128,18 @@ export async function createTextEditor(block, onChange, store) {
     colSelect.value = block.config.linkedColumn || '';
   }
 
-  tableSelect.addEventListener('change', () => {
-    onChange({ linkedTable: tableSelect.value || null, linkedColumn: null });
-    loadColumns(tableSelect.value);
-  });
-
   colSelect.addEventListener('change', () => {
-    onChange({ linkedColumn: colSelect.value || null });
+    onChange({
+      linkedColumn: colSelect.value || null,
+      useLinkedTable: true,
+    });
   });
 
-  if (block.config.linkedTable) {
-    await loadColumns(block.config.linkedTable);
-  }
-
-  linkSection.appendChild(linkLabel);
-  linkSection.appendChild(tableSelect);
   linkSection.appendChild(colSelect);
 
-  editor.appendChild(createEl('label', 'dc-label', 'Contenu Markdown'));
-  editor.appendChild(textarea);
-  editor.appendChild(createEl('label', 'dc-label', 'Aperçu'));
-  editor.appendChild(preview);
   editor.appendChild(linkSection);
+
+  await loadColumns();
 
   return editor;
 }

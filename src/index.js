@@ -1,6 +1,6 @@
 import './styles/main.css';
 import { store } from './store.js';
-import { initGrist, onRecord, onOptionsChange, listTables, getCurrentRecord, getSelectedTableId, getTableStructure } from './grist-api.js';
+import { initGrist, onRecord, onOptionsChange, listTables, getLinkedTableId, getLinkedTableColumns, getAllTablesWithColumns } from './grist-api.js';
 import { PageManager, PAGE_GAP } from './page-manager.js';
 import { BlockManager } from './block-manager.js';
 import { createToolbar } from './toolbar.js';
@@ -164,8 +164,6 @@ async function renderPage(page, pageIndex) {
 async function renderAll() {
   if (!pagesContainer) return;
 
-  const dims = store.getPageDimensions();
-
   for (let i = 0; i < store.config.pages.length; i++) {
     await renderPage(store.config.pages[i], i);
   }
@@ -177,15 +175,6 @@ async function renderAll() {
       pageEl.remove();
     }
   }
-
-  updatePageVisibility();
-}
-
-function updatePageVisibility() {
-  const pageEls = pagesContainer.querySelectorAll('.dc-page');
-  pageEls.forEach(el => {
-    el.classList.toggle('dc-hidden', store.previewMode && false);
-  });
 }
 
 function openBlockEditor(blockId) {
@@ -250,53 +239,26 @@ async function init() {
 
   if (isGrist) {
     try {
-      const g = window.grist || (typeof grist !== 'undefined' ? grist : null);
-      let tables = await listTables();
-      const selectedTableId = await getSelectedTableId();
+      const linkedTableId = await getLinkedTableId();
+      console.log('[dashboard-composer] Linked table ID:', linkedTableId);
 
-      console.log('[dashboard-composer] === DEBUG INFO ===');
-      console.log('[dashboard-composer] window.grist:', !!window.grist);
-      console.log('[dashboard-composer] grist object keys:', g ? Object.keys(g) : 'null');
-      console.log('[dashboard-composer] grist.docApi:', g ? !!g.docApi : 'null');
-      console.log('[dashboard-composer] grist.selectedTable:', g ? g.selectedTable : 'null');
-      console.log('[dashboard-composer] grist.raw:', g ? !!g.raw : 'null');
-      console.log('[dashboard-composer] grist.viewApi:', g ? !!g.viewApi : 'null');
-      console.log('[dashboard-composer] grist.sectionApi:', g ? !!g.sectionApi : 'null');
-      console.log('[dashboard-composer] listTables result:', tables);
-      console.log('[dashboard-composer] selectedTableId:', selectedTableId);
+      const linkedColumns = await getLinkedTableColumns();
+      console.log('[dashboard-composer] Linked table columns:', linkedColumns.length, linkedColumns.map(c => c.id));
 
-      if (selectedTableId) {
-        store.setSelectedTableId(selectedTableId);
-        if (!tables || tables.length === 0 || !tables.includes(selectedTableId)) {
-          tables = tables || [];
-          if (!tables.includes(selectedTableId)) tables.unshift(selectedTableId);
-        }
-        try {
-          const structure = await getTableStructure(selectedTableId);
-          console.log('[dashboard-composer] selected table structure:', structure);
-          store.setTableStructure(selectedTableId, structure);
-        } catch (e) {
-          console.error('[index] Error loading selected table structure:', e);
-        }
-      }
+      store.setSelectedTableId(linkedTableId);
+      store.setLinkedColumns(linkedColumns);
 
-      if ((!tables || tables.length === 0) && g && g.docApi) {
-        try {
-          const sqlResult = await g.docApi.executeSQL({
-            sql: 'SELECT id FROM _grist_Tables ORDER BY id'
-          });
-          tables = sqlResult.records.map(r => r.fields.id);
-          console.log('[dashboard-composer] Tables from SQL:', tables);
-        } catch (e) {
-          console.error('[dashboard-composer] SQL listTables fallback error:', e);
-        }
-      }
-
+      const tables = await listTables();
       store.setTables(tables || []);
-      console.log('[dashboard-composer] Final tables list:', tables);
-      console.log('[dashboard-composer] === END DEBUG ===');
+
+      if (tables && tables.length > 0) {
+        const allStructures = await getAllTablesWithColumns();
+        for (const [tid, cols] of Object.entries(allStructures)) {
+          store.setTableStructure(tid, cols);
+        }
+      }
     } catch (e) {
-      console.error('[dashboard-composer] Error loading tables:', e);
+      console.error('[dashboard-composer] Error loading Grist data:', e);
     }
   }
 
@@ -314,10 +276,6 @@ async function init() {
   if (isGrist) {
     onRecord(async (record, mappings) => {
       store.setCurrentRecord(record);
-      const selectedTableId = await getSelectedTableId();
-      if (selectedTableId) {
-        store.setSelectedTableId(selectedTableId);
-      }
       refreshAllBlocks();
     });
 
@@ -327,7 +285,7 @@ async function init() {
   } else {
     console.warn('[dashboard-composer] Running in dev mode (no Grist context)');
     store.setTables(['Sites', 'Batiments', 'Niveaux', 'Locaux', 'Surfaces_fonctionnelles']);
-    store.setTableStructure('Batiments', [
+    store.setLinkedColumns([
       { id: 'numero', label: 'Numéro', type: 'Text' },
       { id: 'appellation', label: 'Appellation', type: 'Text' },
       { id: 'nom_batiment', label: 'Nom du bâtiment', type: 'Text' },
@@ -335,14 +293,6 @@ async function init() {
       { id: 'SUN', label: 'SUN', type: 'Numeric' },
       { id: 'SUB', label: 'SUB', type: 'Numeric' },
       { id: 'SDP', label: 'SDP', type: 'Numeric' },
-    ]);
-    store.setTableStructure('Niveaux', [
-      { id: 'niveau', label: 'Niveau', type: 'Text' },
-      { id: 'SUN', label: 'SUN', type: 'Numeric' },
-      { id: 'SUB', label: 'SUB', type: 'Numeric' },
-      { id: 'SDP', label: 'SDP', type: 'Numeric' },
-      { id: 'SHOB', label: 'SHOB', type: 'Numeric' },
-      { id: 'SCE', label: 'SCE', type: 'Numeric' },
     ]);
   }
 

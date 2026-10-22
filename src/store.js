@@ -20,6 +20,7 @@ class Store {
     this.config = deepClone(defaultConfig);
     this.currentRecord = null;
     this.selectedTableId = null;
+    this.linkedColumns = [];
     this.listeners = new Set();
     this.selectedBlockId = null;
     this.editMode = false;
@@ -42,6 +43,7 @@ class Store {
       config: this.config,
       currentRecord: this.currentRecord,
       selectedTableId: this.selectedTableId,
+      linkedColumns: this.linkedColumns,
       selectedBlockId: this.selectedBlockId,
       editMode: this.editMode,
       previewMode: this.previewMode,
@@ -52,7 +54,6 @@ class Store {
 
   async init() {
     const options = await getOptions();
-    console.log('[store] init options:', options, typeof options);
     if (options && options[OPTION_KEY]) {
       try {
         const saved = typeof options[OPTION_KEY] === 'string'
@@ -84,6 +85,11 @@ class Store {
 
   setSelectedTableId(tableId) {
     this.selectedTableId = tableId;
+    this.notify();
+  }
+
+  setLinkedColumns(columns) {
+    this.linkedColumns = columns;
     this.notify();
   }
 
@@ -179,9 +185,10 @@ class Store {
   getDefaultBlockConfig(type) {
     switch (type) {
       case 'text':
-        return { markdown: '', linkedTable: null, linkedColumn: null };
+        return { markdown: '', linkedTable: null, linkedColumn: null, useLinkedTable: true };
       case 'table':
         return {
+          useLinkedTable: true,
           sourceTable: null,
           columns: [],
           filters: [],
@@ -194,8 +201,9 @@ class Store {
         };
       case 'chart':
         return {
+          useLinkedTable: true,
           sourceTable: null,
-          chartType: 'bar',
+          chartType: 'barGrouped',
           xColumn: null,
           yColumns: [],
           palette: 'palette-1',
@@ -205,6 +213,7 @@ class Store {
         };
       case 'image':
         return {
+          useLinkedTable: true,
           sourceTable: null,
           imageColumn: null,
           imageIndex: 0,

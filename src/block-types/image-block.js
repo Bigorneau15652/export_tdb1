@@ -1,5 +1,5 @@
 import { createEl } from '../utils.js';
-import { fetchTableData, getTableStructure, listTables, getSelectedTableId } from '../grist-api.js';
+import { fetchTableData, fetchLinkedTableData, getTableStructure, getLinkedTableColumns, getAllTablesWithColumns } from '../grist-api.js';
 
 export async function renderImageBlock(block, container, store) {
   container.className = 'dc-block-content dc-image-block';
@@ -7,8 +7,8 @@ export async function renderImageBlock(block, container, store) {
 
   const cfg = block.config;
 
-  if (!cfg.sourceTable || !cfg.imageColumn) {
-    container.appendChild(createEl('div', 'dc-block-placeholder', '⚙️ Configurez l\'image : choisissez une table et une colonne'));
+  if (!cfg.imageColumn) {
+    container.appendChild(createEl('div', 'dc-block-placeholder', '⚙️ Configurez l\'image : choisissez une colonne contenant des images'));
     return { update: async () => {}, destroy() {} };
   }
 
@@ -28,10 +28,19 @@ export async function renderImageBlock(block, container, store) {
 
   async function update() {
     try {
-      const data = await fetchTableData(cfg.sourceTable, {
-        columns: [cfg.imageColumn],
-        limit: 1000,
-      });
+      let data;
+      if (cfg.useLinkedTable !== false) {
+        data = await fetchLinkedTableData({ limit: 1000 });
+      } else if (cfg.sourceTable) {
+        data = await fetchTableData(cfg.sourceTable, { limit: 1000 });
+      }
+
+      if (!data || !data.records) {
+        img.style.display = 'none';
+        placeholder.style.display = 'flex';
+        placeholder.textContent = '🖼 Aucune donnée';
+        return;
+      }
 
       const rec = data.records.find(r => store.currentRecord && r.id === store.currentRecord.id);
       if (!rec) {
@@ -49,7 +58,6 @@ export async function renderImageBlock(block, container, store) {
         return;
       }
 
-      let imageUrl = null;
       let images = [];
 
       if (Array.isArray(val)) {
@@ -68,6 +76,8 @@ export async function renderImageBlock(block, container, store) {
 
       const idx = Math.min(cfg.imageIndex || 0, Math.max(0, images.length - 1));
       const selected = images[idx];
+
+      let imageUrl = null;
 
       if (typeof selected === 'number') {
         const g = window.grist || (typeof grist !== 'undefined' ? grist : null);
@@ -119,69 +129,89 @@ export async function createImageEditor(block, onChange, store) {
   const editor = createEl('div', 'dc-block-editor dc-image-editor');
   const cfg = block.config;
 
-  let tables = await listTables();
-  const selectedTableId = await getSelectedTableId();
-  const isGristContext = !!(window.grist || (typeof grist !== 'undefined' && grist));
+  editor.appendChild(createEl('p', 'dc-hint', '🖼 L\'image provient de la table liée à ce widget. Choisissez une colonne de type "Pièce jointe" ou "Texte" (URL).'));
 
-  if ((!tables || tables.length === 0) && selectedTableId) {
-    tables = [selectedTableId];
-  }
-
-  const debugInfo = createEl('div', 'dc-debug-info');
-  debugInfo.style.cssText = 'font-size:11px;color:#888;background:#f5f5f5;padding:6px;border-radius:4px;margin-bottom:8px;font-family:monospace;';
-  debugInfo.textContent = `Debug: Grist=${isGristContext}, Tables=${tables ? tables.length : 'null'} [${(tables || []).join(', ')}], Selected=${selectedTableId || 'none'}`;
-  editor.appendChild(debugInfo);
-
-  const tableLabel = createEl('label', 'dc-label', 'Table source');
-  const tableSelect = createEl('select', 'dc-select dc-select-full');
-  tableSelect.appendChild(createEl('option', '', '— Choisir une table —'));
-  (tables || []).forEach(t => {
-    const opt = createEl('option', '', t);
-    opt.value = t;
-    tableSelect.appendChild(opt);
-  });
-
-  if (!cfg.sourceTable && selectedTableId && tables.includes(selectedTableId)) {
-    cfg.sourceTable = selectedTableId;
-    onChange({ sourceTable: selectedTableId });
-  }
-  tableSelect.value = cfg.sourceTable || '';
-
-  const colLabel = createEl('label', 'dc-label', 'Colonne image (Attachments ou URL)');
+  const colLabel = createEl('label', 'dc-label', 'Colonne contenant l\'image');
   const colSelect = createEl('select', 'dc-select dc-select-full');
+  editor.appendChild(colLabel);
+  editor.appendChild(colSelect);
 
-  const indexLabel = createEl('label', 'dc-label', 'Index de l\'image (si plusieurs)');
+  const indexLabel = createEl('label', 'dc-label', 'Numéro de l\'image (si plusieurs dans la cellule)');
   const indexInput = createEl('input', 'dc-input dc-input-full');
   indexInput.type = 'number';
   indexInput.min = '0';
   indexInput.value = cfg.imageIndex || 0;
   indexInput.addEventListener('input', () => onChange({ imageIndex: parseInt(indexInput.value, 10) || 0 }));
+  editor.appendChild(indexLabel);
+  editor.appendChild(indexInput);
 
-  const captionLabel = createEl('label', 'dc-label', 'Légende');
+  const captionLabel = createEl('label', 'dc-label', 'Légende (affichée sous l\'image)');
   const captionInput = createEl('input', 'dc-input dc-input-full');
   captionInput.type = 'text';
   captionInput.value = cfg.caption || '';
   captionInput.placeholder = 'Légende optionnelle';
   captionInput.addEventListener('input', () => onChange({ caption: captionInput.value }));
+  editor.appendChild(captionLabel);
+  editor.appendChild(captionInput);
 
-  let availableColumns = [];
+  colSelect.appendChild(createEl('option', '', '⏳ Chargement des colonnes...'));
 
-  async function loadColumns(tableId) {
-    if (!tableId) {
-      availableColumns = [];
-      renderColumnSelect();
+  async function loadColumns() {
+    colSelect.innerHTML = '';
+    colSelect.appendChild(createEl('option', '', '— Choisir une colonne —'));
+
+    let columns = [];
+
+    if (cfg.useLinkedTable !== false) {
+      columns = await getLinkedTableColumns();
+      console.log('[image-block] Linked columns:', columns.length);
+    }
+
+    if (columns.length === 0 && cfg.sourceTable) {
+      columns = await getTableStructure(cfg.sourceTable);
+    }
+
+    if (columns.length === 0) {
+      columns = await getLinkedTableColumns();
+    }
+
+    colSelect.innerHTML = '';
+    colSelect.appendChild(createEl('option', '', '— Choisir une colonne —'));
+
+    if (columns.length === 0) {
+      colSelect.appendChild(createEl('option', '', '⚠️ Aucune colonne disponible'));
+
+      const allTables = await getAllTablesWithColumns();
+      const tableIds = Object.keys(allTables);
+      if (tableIds.length > 0) {
+        const altLabel = createEl('label', 'dc-label', 'Ou choisir une autre table:');
+        const altSelect = createEl('select', 'dc-select dc-select-full');
+        altSelect.appendChild(createEl('option', '', '— Choisir —'));
+        tableIds.forEach(tid => {
+          const opt = createEl('option', '', tid);
+          opt.value = tid;
+          altSelect.appendChild(opt);
+        });
+        altSelect.addEventListener('change', async () => {
+          if (altSelect.value) {
+            onChange({ sourceTable: altSelect.value, useLinkedTable: false, imageColumn: null });
+            const cols = allTables[altSelect.value] || await getTableStructure(altSelect.value);
+            renderColumns(cols);
+          }
+        });
+        editor.appendChild(altLabel);
+        editor.appendChild(altSelect);
+      }
       return;
     }
-    console.log('[image-block] loadColumns for:', tableId);
-    availableColumns = await getTableStructure(tableId);
-    console.log('[image-block] Final columns:', availableColumns.length);
-    renderColumnSelect();
+
+    renderColumns(columns);
   }
 
-  function renderColumnSelect() {
+  function renderColumns(columns) {
     colSelect.innerHTML = '';
-    colSelect.appendChild(createEl('option', '', '— Choisir —'));
-    availableColumns.forEach(col => {
+    colSelect.appendChild(createEl('option', '', '— Choisir une colonne —'));
+    columns.forEach(col => {
       const opt = createEl('option', '', `${col.label || col.id} (${col.type})`);
       opt.value = col.id;
       colSelect.appendChild(opt);
@@ -189,26 +219,9 @@ export async function createImageEditor(block, onChange, store) {
     colSelect.value = cfg.imageColumn || '';
   }
 
-  colSelect.addEventListener('change', () => onChange({ imageColumn: colSelect.value }));
-  tableSelect.addEventListener('change', () => {
-    onChange({ sourceTable: tableSelect.value, imageColumn: null });
-    loadColumns(tableSelect.value);
-  });
+  colSelect.addEventListener('change', () => onChange({ imageColumn: colSelect.value || null }));
 
-  if (cfg.sourceTable) {
-    await loadColumns(cfg.sourceTable);
-  } else {
-    renderColumnSelect();
-  }
-
-  editor.appendChild(tableLabel);
-  editor.appendChild(tableSelect);
-  editor.appendChild(colLabel);
-  editor.appendChild(colSelect);
-  editor.appendChild(indexLabel);
-  editor.appendChild(indexInput);
-  editor.appendChild(captionLabel);
-  editor.appendChild(captionInput);
+  await loadColumns();
 
   return editor;
 }
