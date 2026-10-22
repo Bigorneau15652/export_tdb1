@@ -1,7 +1,7 @@
 import './styles/main.css';
 import { store } from './store.js';
-import { initGrist, onRecord, onOptionsChange, listTables, getLinkedTableId, getLinkedTableColumns, getAllTablesWithColumns } from './grist-api.js';
-import { PageManager, PAGE_GAP } from './page-manager.js';
+import { initGrist, onRecord, onOptionsChange, listTables, getLinkedTableId } from './grist-api.js';
+import { PageManager } from './page-manager.js';
 import { BlockManager } from './block-manager.js';
 import { createToolbar } from './toolbar.js';
 import { createEditorPanel } from './editor.js';
@@ -17,7 +17,6 @@ let pagesContainer = null;
 let blockManager = null;
 let pageManager = null;
 let blockRenderers = new Map();
-let isInitialized = false;
 
 function getBlockRenderer(type) {
   switch (type) {
@@ -126,7 +125,6 @@ async function renderPage(page, pageIndex) {
 
   pageEl.style.width = `${dims.width}px`;
   pageEl.style.height = `${dims.height}px`;
-
   pageEl.querySelector('.dc-page-indicator').textContent = `Page ${pageIndex + 1}`;
 
   const existingBlockIds = new Set(
@@ -163,11 +161,9 @@ async function renderPage(page, pageIndex) {
 
 async function renderAll() {
   if (!pagesContainer) return;
-
   for (let i = 0; i < store.config.pages.length; i++) {
     await renderPage(store.config.pages[i], i);
   }
-
   const existingPages = Array.from(pagesContainer.querySelectorAll('.dc-page'));
   for (const pageEl of existingPages) {
     const pageId = pageEl.dataset.pageId;
@@ -180,14 +176,10 @@ async function renderAll() {
 function openBlockEditor(blockId) {
   const block = store.findBlock(blockId);
   if (!block) return;
-
   const existing = document.querySelector('.dc-editor-overlay');
   if (existing) existing.remove();
-
   const panel = createEditorPanel(block, store, (reopen) => {
-    if (reopen) {
-      renderAll();
-    }
+    if (reopen) renderAll();
   });
   document.body.appendChild(panel);
 }
@@ -195,10 +187,8 @@ function openBlockEditor(blockId) {
 async function addBlock(type) {
   const activePage = store.config.pages[store.config.pages.length - 1];
   if (!activePage) return;
-
   const pos = pageManager.findFreePosition(activePage.id, 400, 200);
   const block = store.addBlock(activePage.id, type, pos.x, pos.y);
-
   if (block) {
     await renderAll();
     openBlockEditor(block.id);
@@ -234,31 +224,19 @@ async function init() {
   blockManager = new BlockManager(store, pagesContainer);
 
   const isGrist = await initGrist();
-
   await store.init();
 
   if (isGrist) {
     try {
       const linkedTableId = await getLinkedTableId();
-      console.log('[dashboard-composer] Linked table ID:', linkedTableId);
-
-      const linkedColumns = await getLinkedTableColumns();
-      console.log('[dashboard-composer] Linked table columns:', linkedColumns.length, linkedColumns.map(c => c.id));
-
+      console.log('[dashboard-composer] Linked table:', linkedTableId);
       store.setSelectedTableId(linkedTableId);
-      store.setLinkedColumns(linkedColumns);
 
       const tables = await listTables();
+      console.log('[dashboard-composer] Tables:', tables.length);
       store.setTables(tables || []);
-
-      if (tables && tables.length > 0) {
-        const allStructures = await getAllTablesWithColumns();
-        for (const [tid, cols] of Object.entries(allStructures)) {
-          store.setTableStructure(tid, cols);
-        }
-      }
     } catch (e) {
-      console.error('[dashboard-composer] Error loading Grist data:', e);
+      console.error('[dashboard-composer] Error:', e);
     }
   }
 
@@ -283,28 +261,16 @@ async function init() {
       store.init();
     });
   } else {
-    console.warn('[dashboard-composer] Running in dev mode (no Grist context)');
-    store.setTables(['Sites', 'Batiments', 'Niveaux', 'Locaux', 'Surfaces_fonctionnelles']);
-    store.setLinkedColumns([
-      { id: 'numero', label: 'Numéro', type: 'Text' },
-      { id: 'appellation', label: 'Appellation', type: 'Text' },
-      { id: 'nom_batiment', label: 'Nom du bâtiment', type: 'Text' },
-      { id: 'annee_construction', label: 'Année de construction', type: 'Int' },
-      { id: 'SUN', label: 'SUN', type: 'Numeric' },
-      { id: 'SUB', label: 'SUB', type: 'Numeric' },
-      { id: 'SDP', label: 'SDP', type: 'Numeric' },
-    ]);
+    console.warn('[dashboard-composer] Dev mode');
+    store.setTables(['Sites', 'Batiments', 'Niveaux']);
   }
 
   await renderAll();
-  isInitialized = true;
 }
 
 async function refreshAllBlocks() {
   for (const [blockId, renderer] of blockRenderers) {
-    if (renderer && typeof renderer.update === 'function') {
-      await renderer.update();
-    }
+    if (renderer?.update) await renderer.update();
   }
 }
 

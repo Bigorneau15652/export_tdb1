@@ -1,7 +1,7 @@
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { createEl, debounce } from '../utils.js';
-import { fetchLinkedTableData, fetchTableData, getLinkedTableColumns, getTableStructure, getAllTablesWithColumns, getLinkedTableId } from '../grist-api.js';
+import { fetchTableData, getTableStructure, listTables, getLinkedTableId } from '../grist-api.js';
 
 marked.setOptions({
   breaks: true,
@@ -18,23 +18,16 @@ export function renderTextBlock(block, container, store) {
   async function update() {
     let markdown = block.config.markdown || '';
 
-    if (block.config.linkedColumn && store.currentRecord) {
+    if (block.config.linkedTable && block.config.linkedColumn && store.currentRecord) {
       try {
-        let data;
-        if (block.config.useLinkedTable !== false) {
-          data = await fetchLinkedTableData({ limit: 1000 });
-        } else if (block.config.linkedTable) {
-          data = await fetchTableData(block.config.linkedTable, { limit: 1000 });
-        }
-        if (data && data.records) {
-          const rec = data.records.find(r => r.id === store.currentRecord.id);
-          if (rec && rec.fields[block.config.linkedColumn]) {
-            const val = rec.fields[block.config.linkedColumn];
-            markdown = typeof val === 'string' ? val : JSON.stringify(val);
-          }
+        const data = await fetchTableData(block.config.linkedTable, { limit: 1000 });
+        const rec = data.records?.find(r => r.id === store.currentRecord.id);
+        if (rec?.fields?.[block.config.linkedColumn]) {
+          const val = rec.fields[block.config.linkedColumn];
+          markdown = typeof val === 'string' ? val : JSON.stringify(val);
         }
       } catch (e) {
-        console.error('[text-block] Error fetching linked data:', e);
+        console.error('[text-block] Error:', e);
       }
     }
 
@@ -82,9 +75,7 @@ export async function createTextEditor(block, onChange, store) {
   }, 300);
 
   textarea.addEventListener('input', updatePreview);
-
-  const rawHtml = marked.parse(textarea.value);
-  preview.innerHTML = DOMPurify.sanitize(rawHtml);
+  preview.innerHTML = DOMPurify.sanitize(marked.parse(textarea.value));
 
   editor.appendChild(textarea);
   editor.appendChild(createEl('label', 'dc-label', 'Aperçu'));
@@ -93,9 +84,8 @@ export async function createTextEditor(block, onChange, store) {
   const linkSection = createEl('div', 'dc-text-link-section');
   linkSection.style.cssText = 'margin-top:16px;padding-top:12px;border-top:1px solid #ddd;';
 
-  const linkLabel = createEl('label', 'dc-label', 'Ou remplacer par le contenu d\'une colonne (dynamique)');
-  linkSection.appendChild(linkLabel);
-  linkSection.appendChild(createEl('p', 'dc-hint', 'Le texte ci-dessus sera remplacé par la valeur de la colonne choisie, pour la ligne active.'));
+  linkSection.appendChild(createEl('label', 'dc-label', 'Ou remplacer par le contenu d\'une colonne (dynamique)'));
+  linkSection.appendChild(createEl('p', 'dc-hint', 'Le texte Markdown ci-dessus sera remplacé par la valeur de cette colonne pour la ligne active.'));
 
   const tableSelect = createEl('select', 'dc-select dc-select-full');
   tableSelect.appendChild(createEl('option', '', '— Texte statique (Markdown ci-dessus) —'));
@@ -103,32 +93,29 @@ export async function createTextEditor(block, onChange, store) {
   const colSelect = createEl('select', 'dc-select dc-select-full');
   colSelect.appendChild(createEl('option', '', '— Choisir une colonne —'));
 
-  let allTablesData = {};
-
   async function loadTables() {
     tableSelect.innerHTML = '';
     tableSelect.appendChild(createEl('option', '', '— Texte statique (Markdown ci-dessus) —'));
     tableSelect.appendChild(createEl('option', '', '⏳ Chargement...'));
 
-    allTablesData = await getAllTablesWithColumns();
-    const tableIds = Object.keys(allTablesData);
-    const linkedId = await getLinkedTableId();
-    console.log('[text-block] Tables:', tableIds, 'Linked:', linkedId);
+    const tables = await listTables();
+    console.log('[text-block] Tables:', tables.length);
 
     tableSelect.innerHTML = '';
     tableSelect.appendChild(createEl('option', '', '— Texte statique (Markdown ci-dessus) —'));
-    tableIds.forEach(tid => {
-      const opt = createEl('option', '', tid);
-      opt.value = tid;
+    tables.forEach(t => {
+      const opt = createEl('option', '', t);
+      opt.value = t;
       tableSelect.appendChild(opt);
     });
 
-    if (block.config.linkedTable && tableIds.includes(block.config.linkedTable)) {
+    const linkedId = await getLinkedTableId();
+    if (block.config.linkedTable && tables.includes(block.config.linkedTable)) {
       tableSelect.value = block.config.linkedTable;
-      loadColumns(block.config.linkedTable);
-    } else if (linkedId && tableIds.includes(linkedId)) {
+      await loadColumns(block.config.linkedTable);
+    } else if (linkedId && tables.includes(linkedId)) {
       tableSelect.value = linkedId;
-      loadColumns(linkedId);
+      await loadColumns(linkedId);
     }
   }
 
@@ -136,8 +123,8 @@ export async function createTextEditor(block, onChange, store) {
     colSelect.innerHTML = '';
     colSelect.appendChild(createEl('option', '', '— Choisir une colonne —'));
     if (!tableId) return;
-
-    const columns = allTablesData[tableId] || await getTableStructure(tableId);
+    const columns = await getTableStructure(tableId);
+    console.log('[text-block] Columns:', columns.length);
     columns.forEach(col => {
       const opt = createEl('option', '', `${col.label || col.id} (${col.type})`);
       opt.value = col.id;
@@ -148,11 +135,7 @@ export async function createTextEditor(block, onChange, store) {
 
   tableSelect.addEventListener('change', () => {
     const tid = tableSelect.value;
-    onChange({
-      linkedTable: tid || null,
-      linkedColumn: null,
-      useLinkedTable: !!tid,
-    });
+    onChange({ linkedTable: tid || null, linkedColumn: null });
     loadColumns(tid);
   });
 
@@ -162,7 +145,6 @@ export async function createTextEditor(block, onChange, store) {
 
   linkSection.appendChild(tableSelect);
   linkSection.appendChild(colSelect);
-
   editor.appendChild(linkSection);
 
   await loadTables();

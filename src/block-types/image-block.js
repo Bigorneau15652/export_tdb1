@@ -1,5 +1,5 @@
 import { createEl } from '../utils.js';
-import { fetchTableData, fetchLinkedTableData, getTableStructure, getLinkedTableColumns, getAllTablesWithColumns, getLinkedTableId } from '../grist-api.js';
+import { fetchTableData, getTableStructure, listTables, getLinkedTableId } from '../grist-api.js';
 
 export async function renderImageBlock(block, container, store) {
   container.className = 'dc-block-content dc-image-block';
@@ -7,8 +7,8 @@ export async function renderImageBlock(block, container, store) {
 
   const cfg = block.config;
 
-  if (!cfg.imageColumn) {
-    container.appendChild(createEl('div', 'dc-block-placeholder', '⚙️ Configurez l\'image : choisissez une colonne contenant des images'));
+  if (!cfg.sourceTable || !cfg.imageColumn) {
+    container.appendChild(createEl('div', 'dc-block-placeholder', '⚙️ Configurez l\'image : choisissez une table et une colonne'));
     return { update: async () => {}, destroy() {} };
   }
 
@@ -28,21 +28,9 @@ export async function renderImageBlock(block, container, store) {
 
   async function update() {
     try {
-      let data;
-      if (cfg.useLinkedTable !== false) {
-        data = await fetchLinkedTableData({ limit: 1000 });
-      } else if (cfg.sourceTable) {
-        data = await fetchTableData(cfg.sourceTable, { limit: 1000 });
-      }
+      const data = await fetchTableData(cfg.sourceTable, { limit: 1000 });
 
-      if (!data || !data.records) {
-        img.style.display = 'none';
-        placeholder.style.display = 'flex';
-        placeholder.textContent = '🖼 Aucune donnée';
-        return;
-      }
-
-      const rec = data.records.find(r => store.currentRecord && r.id === store.currentRecord.id);
+      const rec = data.records?.find(r => store.currentRecord && r.id === store.currentRecord.id);
       if (!rec) {
         img.style.display = 'none';
         placeholder.style.display = 'flex';
@@ -59,13 +47,9 @@ export async function renderImageBlock(block, container, store) {
       }
 
       let images = [];
-
       if (Array.isArray(val)) {
-        if (val[0] === 'L') {
-          images = val.slice(1);
-        } else if (typeof val[0] === 'number') {
-          images = val;
-        }
+        if (val[0] === 'L') images = val.slice(1);
+        else if (typeof val[0] === 'number') images = val;
       } else if (typeof val === 'string') {
         if (val.startsWith('http://') || val.startsWith('https://') || val.startsWith('data:')) {
           images = [val];
@@ -78,16 +62,13 @@ export async function renderImageBlock(block, container, store) {
       const selected = images[idx];
 
       let imageUrl = null;
-
       if (typeof selected === 'number') {
         const g = window.grist || (typeof grist !== 'undefined' ? grist : null);
-        if (g && g.docApi) {
+        if (g?.docApi) {
           try {
             const token = await g.docApi.getAccessToken({ readOnly: true });
             imageUrl = `/api/docs/${g.docApi._docId || ''}/attachments/${selected}/download`;
-          } catch (e) {
-            imageUrl = null;
-          }
+          } catch (e) { imageUrl = null; }
         }
       } else if (typeof selected === 'string') {
         imageUrl = selected;
@@ -119,17 +100,13 @@ export async function renderImageBlock(block, container, store) {
 
   return {
     update,
-    destroy() {
-      img.src = '';
-    },
+    destroy() { img.src = ''; },
   };
 }
 
 export async function createImageEditor(block, onChange, store) {
   const editor = createEl('div', 'dc-block-editor dc-image-editor');
   const cfg = block.config;
-
-  editor.appendChild(createEl('p', 'dc-hint', '🖼 L\'image provient d\'une table du document. Choisissez une colonne de type "Pièce jointe" ou "Texte" (URL).'));
 
   const tableLabel = createEl('label', 'dc-label', 'Table source');
   const tableSelect = createEl('select', 'dc-select dc-select-full');
@@ -159,38 +136,42 @@ export async function createImageEditor(block, onChange, store) {
   editor.appendChild(captionLabel);
   editor.appendChild(captionInput);
 
-  let allTablesData = {};
-
   async function loadTables() {
     tableSelect.innerHTML = '';
-    tableSelect.appendChild(createEl('option', '', '⏳ Chargement...'));
+    tableSelect.appendChild(createEl('option', '', '⏳ Chargement des tables...'));
 
-    allTablesData = await getAllTablesWithColumns();
-    const tableIds = Object.keys(allTablesData);
-    const linkedId = await getLinkedTableId();
-    console.log('[image-block] Tables:', tableIds, 'Linked:', linkedId);
+    const tables = await listTables();
+    console.log('[image-block] Tables:', tables.length);
 
     tableSelect.innerHTML = '';
     tableSelect.appendChild(createEl('option', '', '— Choisir une table —'));
-    tableIds.forEach(tid => {
-      const opt = createEl('option', '', tid);
-      opt.value = tid;
+    tables.forEach(t => {
+      const opt = createEl('option', '', t);
+      opt.value = t;
       tableSelect.appendChild(opt);
     });
 
-    if (cfg.sourceTable && tableIds.includes(cfg.sourceTable)) {
+    const linkedId = await getLinkedTableId();
+    if (cfg.sourceTable && tables.includes(cfg.sourceTable)) {
       tableSelect.value = cfg.sourceTable;
-      renderColumns(allTablesData[cfg.sourceTable] || []);
-    } else if (linkedId && tableIds.includes(linkedId)) {
+      await loadColumns(cfg.sourceTable);
+    } else if (linkedId && tables.includes(linkedId)) {
       tableSelect.value = linkedId;
-      renderColumns(allTablesData[linkedId] || []);
-      onChange({ sourceTable: linkedId, useLinkedTable: true });
-    } else {
-      renderColumns([]);
+      onChange({ sourceTable: linkedId });
+      await loadColumns(linkedId);
     }
   }
 
-  function renderColumns(columns) {
+  async function loadColumns(tableId) {
+    colSelect.innerHTML = '';
+    colSelect.appendChild(createEl('option', '', '⏳ Chargement...'));
+    if (!tableId) {
+      colSelect.innerHTML = '';
+      colSelect.appendChild(createEl('option', '', '— Choisir une colonne —'));
+      return;
+    }
+    const columns = await getTableStructure(tableId);
+    console.log('[image-block] Columns:', columns.length);
     colSelect.innerHTML = '';
     colSelect.appendChild(createEl('option', '', '— Choisir une colonne —'));
     columns.forEach(col => {
@@ -206,12 +187,13 @@ export async function createImageEditor(block, onChange, store) {
   tableSelect.addEventListener('change', async () => {
     const tid = tableSelect.value;
     if (!tid) {
-      renderColumns([]);
+      colSelect.innerHTML = '';
+      colSelect.appendChild(createEl('option', '', '— Choisir une colonne —'));
+      onChange({ sourceTable: null, imageColumn: null });
       return;
     }
-    onChange({ sourceTable: tid, useLinkedTable: false, imageColumn: null });
-    const cols = allTablesData[tid] || await getTableStructure(tid);
-    renderColumns(cols);
+    onChange({ sourceTable: tid, imageColumn: null });
+    await loadColumns(tid);
   });
 
   await loadTables();

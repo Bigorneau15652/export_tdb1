@@ -1,5 +1,5 @@
 import { createEl, formatNumber, aggregate } from '../utils.js';
-import { fetchTableData, fetchLinkedTableData, getTableStructure, getLinkedTableColumns, listTables, getAllTablesWithColumns, getLinkedTableId } from '../grist-api.js';
+import { fetchTableData, fetchLinkedTableData, getTableStructure, getLinkedTableColumns, listTables, getLinkedTableId } from '../grist-api.js';
 
 const AGGREGATION_FUNCS = [
   { value: 'sum', label: 'Somme' },
@@ -16,7 +16,7 @@ export async function renderTableBlock(block, container, store) {
   const cfg = block.config;
 
   if (!cfg.columns || cfg.columns.length === 0) {
-    container.appendChild(createEl('div', 'dc-block-placeholder', '⚙️ Configurez le tableau : cochez les colonnes à afficher'));
+    container.appendChild(createEl('div', 'dc-block-placeholder', '⚙️ Configurez le tableau : choisissez une table et cochez les colonnes'));
     return { update: async () => {}, destroy() {} };
   }
 
@@ -56,7 +56,7 @@ export async function renderTableBlock(block, container, store) {
 
     let currentData;
     try {
-      if (cfg.useLinkedTable !== false) {
+      if (cfg.useLinkedTable !== false && !cfg.sourceTable) {
         currentData = await fetchLinkedTableData({
           columns: cfg.columns.map(c => c.id),
           filters: cfg.filters,
@@ -70,7 +70,7 @@ export async function renderTableBlock(block, container, store) {
         });
       } else {
         container.innerHTML = '';
-        container.appendChild(createEl('div', 'dc-block-error', '⚠️ Aucune table source configurée'));
+        container.appendChild(createEl('div', 'dc-block-error', '⚠️ Choisissez une table source dans les paramètres'));
         return;
       }
     } catch (e) {
@@ -115,7 +115,6 @@ export async function renderTableBlock(block, container, store) {
         const totalAgg = aggregate(allRowAggs, cfg.footerFunc);
         footerRow.appendChild(createEl('td', 'dc-td-footer dc-td-footer-last', formatNumber(totalAgg)));
       } else {
-        const firstCol = cfg.columns[0];
         footerRow.appendChild(createEl('td', 'dc-td-footer-label', cfg.footerLabel || 'Total'));
         for (let i = 1; i < cfg.columns.length; i++) {
           const col = cfg.columns[i];
@@ -124,7 +123,7 @@ export async function renderTableBlock(block, container, store) {
           footerRow.appendChild(createEl('td', 'dc-td-footer', formatNumber(agg)));
         }
         if (cfg.columns.length === 1) {
-          const values = records.map(r => r.fields[firstCol.id]);
+          const values = records.map(r => r.fields[cfg.columns[0].id]);
           const agg = aggregate(values, cfg.footerFunc);
           footerRow.appendChild(createEl('td', 'dc-td-footer', formatNumber(agg)));
         }
@@ -160,8 +159,6 @@ export async function createTableEditor(block, onChange, store) {
   const editor = createEl('div', 'dc-block-editor dc-table-editor');
   const cfg = block.config;
 
-  editor.appendChild(createEl('p', 'dc-hint', '📋 Le tableau affiche les données de la table liée à ce widget. Cochez les colonnes à afficher.'));
-
   const nameLabel = createEl('label', 'dc-label', 'Nom du tableau (titre affiché au-dessus)');
   const nameInput = createEl('input', 'dc-input dc-input-full');
   nameInput.type = 'text';
@@ -171,11 +168,15 @@ export async function createTableEditor(block, onChange, store) {
   editor.appendChild(nameLabel);
   editor.appendChild(nameInput);
 
+  const tableLabel = createEl('label', 'dc-label', 'Table source');
+  const tableSelect = createEl('select', 'dc-select dc-select-full');
+  editor.appendChild(tableLabel);
+  editor.appendChild(tableSelect);
+
   const columnsLabel = createEl('label', 'dc-label', 'Colonnes à afficher');
   editor.appendChild(columnsLabel);
 
   const columnsContainer = createEl('div', 'dc-columns-selector');
-  columnsContainer.appendChild(createEl('p', 'dc-hint', '⏳ Chargement des colonnes...'));
   editor.appendChild(columnsContainer);
 
   const footerSection = createEl('div', 'dc-footer-section');
@@ -187,6 +188,7 @@ export async function createTableEditor(block, onChange, store) {
   footerEnabledCb.checked = !!cfg.footerFunc;
   footerEnabledCb.addEventListener('change', () => {
     onChange({ footerFunc: footerEnabledCb.checked ? (cfg.footerFunc || 'sum') : null });
+    updateFooterVisibility();
   });
   footerEnabledLabel.appendChild(footerEnabledCb);
   footerEnabledLabel.appendChild(createEl('span', '', ' Ajouter une ligne de total en bas du tableau'));
@@ -221,7 +223,10 @@ export async function createTableEditor(block, onChange, store) {
   const rowAggCb = createEl('input');
   rowAggCb.type = 'checkbox';
   rowAggCb.checked = cfg.rowAggregation || false;
-  rowAggCb.addEventListener('change', () => onChange({ rowAggregation: rowAggCb.checked }));
+  rowAggCb.addEventListener('change', () => {
+    onChange({ rowAggregation: rowAggCb.checked });
+    updateRowAggVisibility();
+  });
   rowAggLabel.appendChild(rowAggCb);
   rowAggLabel.appendChild(createEl('span', '', ' Ajouter une colonne de droite (agrégation par ligne)'));
   footerSection.appendChild(rowAggLabel);
@@ -250,86 +255,65 @@ export async function createTableEditor(block, onChange, store) {
   function updateRowAggVisibility() {
     rowAggConfig.style.display = rowAggCb.checked ? 'block' : 'none';
   }
-  footerEnabledCb.addEventListener('change', updateFooterVisibility);
-  rowAggCb.addEventListener('change', updateRowAggVisibility);
   updateFooterVisibility();
   updateRowAggVisibility();
 
-  async function loadAndRenderColumns() {
+  let availableColumns = [];
+
+  async function loadTables() {
+    tableSelect.innerHTML = '';
+    tableSelect.appendChild(createEl('option', '', '⏳ Chargement des tables...'));
+
+    const tables = await listTables();
+    console.log('[table-block] Tables loaded:', tables.length, tables);
+
+    tableSelect.innerHTML = '';
+    tableSelect.appendChild(createEl('option', '', '— Choisir une table —'));
+    tables.forEach(t => {
+      const opt = createEl('option', '', t);
+      opt.value = t;
+      tableSelect.appendChild(opt);
+    });
+
+    const linkedId = await getLinkedTableId();
+    console.log('[table-block] Linked table:', linkedId);
+
+    if (cfg.sourceTable && tables.includes(cfg.sourceTable)) {
+      tableSelect.value = cfg.sourceTable;
+      await loadColumns(cfg.sourceTable);
+    } else if (linkedId && tables.includes(linkedId)) {
+      tableSelect.value = linkedId;
+      onChange({ sourceTable: linkedId, useLinkedTable: true });
+      await loadColumns(linkedId);
+    } else if (tables.length > 0) {
+      columnsContainer.appendChild(createEl('p', 'dc-hint', '⬆️ Sélectionnez une table pour voir ses colonnes'));
+    } else {
+      columnsContainer.appendChild(createEl('p', 'dc-hint dc-hint-error', '⚠️ Aucune table trouvée. Vérifiez les permissions du widget.'));
+    }
+  }
+
+  async function loadColumns(tableId) {
     columnsContainer.innerHTML = '';
     columnsContainer.appendChild(createEl('p', 'dc-hint', '⏳ Chargement des colonnes...'));
 
-    let columns = [];
-    let usedTableId = null;
+    availableColumns = await getTableStructure(tableId);
+    console.log('[table-block] Columns:', availableColumns.length, availableColumns.map(c => c.id));
 
-    if (cfg.useLinkedTable !== false) {
-      const linkedId = await getLinkedTableId();
-      console.log('[table-block] Linked table ID:', linkedId);
-      if (linkedId) {
-        columns = await getTableStructure(linkedId);
-        usedTableId = linkedId;
-        console.log('[table-block] Columns from linked table:', columns.length);
-      }
-    }
-
-    if (columns.length === 0 && cfg.sourceTable) {
-      columns = await getTableStructure(cfg.sourceTable);
-      usedTableId = cfg.sourceTable;
-      console.log('[table-block] Columns from sourceTable:', columns.length);
-    }
-
-    if (columns.length === 0) {
-      columns = await getLinkedTableColumns();
-      console.log('[table-block] Columns from getLinkedTableColumns:', columns.length);
-    }
-
-    if (columns.length === 0) {
-      const allTables = await getAllTablesWithColumns();
-      const tableIds = Object.keys(allTables);
-      console.log('[table-block] All tables:', tableIds);
-
-      if (tableIds.length > 0) {
-        columnsContainer.innerHTML = '';
-        columnsContainer.appendChild(createEl('p', 'dc-hint dc-hint-error',
-          '⚠️ Impossible de détecter automatiquement la table liée. Veuillez choisir une table :'));
-
-        const tableSelect = createEl('select', 'dc-select dc-select-full');
-        tableSelect.appendChild(createEl('option', '', '— Choisir une table —'));
-        tableIds.forEach(tid => {
-          const opt = createEl('option', '', tid);
-          opt.value = tid;
-          tableSelect.appendChild(opt);
-        });
-        tableSelect.addEventListener('change', async () => {
-          if (tableSelect.value) {
-            onChange({ sourceTable: tableSelect.value, useLinkedTable: false });
-            const cols = allTables[tableSelect.value] || await getTableStructure(tableSelect.value);
-            renderColumns(cols);
-          }
-        });
-        columnsContainer.appendChild(tableSelect);
-      } else {
-        columnsContainer.innerHTML = '';
-        columnsContainer.appendChild(createEl('p', 'dc-hint dc-hint-error',
-          '⚠️ Aucune table trouvée dans ce document.'));
-      }
-      return;
-    }
-
-    renderColumns(columns);
+    renderColumns();
   }
 
-  function renderColumns(columns) {
+  function renderColumns() {
     columnsContainer.innerHTML = '';
 
-    if (columns.length === 0) {
-      columnsContainer.appendChild(createEl('p', 'dc-hint dc-hint-error', '⚠️ Aucune colonne trouvée.'));
+    if (availableColumns.length === 0) {
+      columnsContainer.appendChild(createEl('p', 'dc-hint dc-hint-error',
+        '⚠️ Aucune colonne trouvée pour cette table. Vérifiez la console (F12) pour les logs [grist-api]'));
       return;
     }
 
     const selectedIds = (cfg.columns || []).map(c => c.id);
 
-    columns.forEach(col => {
+    availableColumns.forEach(col => {
       const label = createEl('label', 'dc-checkbox-label');
       const cb = createEl('input');
       cb.type = 'checkbox';
@@ -348,7 +332,20 @@ export async function createTableEditor(block, onChange, store) {
     });
   }
 
-  await loadAndRenderColumns();
+  tableSelect.addEventListener('change', async () => {
+    const tid = tableSelect.value;
+    if (!tid) {
+      availableColumns = [];
+      columnsContainer.innerHTML = '';
+      columnsContainer.appendChild(createEl('p', 'dc-hint', '⬆️ Sélectionnez une table pour voir ses colonnes'));
+      onChange({ sourceTable: null, columns: [] });
+      return;
+    }
+    onChange({ sourceTable: tid, useLinkedTable: false, columns: [] });
+    await loadColumns(tid);
+  });
+
+  await loadTables();
 
   return editor;
 }

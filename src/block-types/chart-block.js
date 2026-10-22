@@ -1,7 +1,7 @@
 import * as echarts from 'echarts';
 import 'echarts-gl';
 import { createEl } from '../utils.js';
-import { fetchTableData, fetchLinkedTableData, getTableStructure, getLinkedTableColumns, listTables, getAllTablesWithColumns, getLinkedTableId } from '../grist-api.js';
+import { fetchTableData, fetchLinkedTableData, getTableStructure, getLinkedTableColumns, listTables, getLinkedTableId } from '../grist-api.js';
 import { getPaletteColors, PALETTES } from '../palettes.js';
 
 const CHART_TYPES = [
@@ -25,8 +25,8 @@ export async function renderChartBlock(block, container, store) {
 
   const cfg = block.config;
 
-  if (!cfg.xColumn || !cfg.yColumns || cfg.yColumns.length === 0) {
-    container.appendChild(createEl('div', 'dc-block-placeholder', '⚙️ Configurez le graphique : choisissez une colonne X et au moins une colonne Y'));
+  if (!cfg.sourceTable || !cfg.xColumn || !cfg.yColumns || cfg.yColumns.length === 0) {
+    container.appendChild(createEl('div', 'dc-block-placeholder', '⚙️ Configurez le graphique : choisissez une table, une colonne X et au moins une colonne Y'));
     return { update: async () => {}, destroy() {} };
   }
 
@@ -39,22 +39,13 @@ export async function renderChartBlock(block, container, store) {
 
   async function update() {
     try {
-      let data;
-      if (cfg.useLinkedTable !== false) {
-        data = await fetchLinkedTableData({
-          columns: [cfg.xColumn, ...cfg.yColumns],
-          filters: cfg.filters,
-          sorts: cfg.sorts,
-        });
-      } else if (cfg.sourceTable) {
-        data = await fetchTableData(cfg.sourceTable, {
-          columns: [cfg.xColumn, ...cfg.yColumns],
-          filters: cfg.filters,
-          sorts: cfg.sorts,
-        });
-      }
+      const data = await fetchTableData(cfg.sourceTable, {
+        columns: [cfg.xColumn, ...cfg.yColumns],
+        filters: cfg.filters,
+        sorts: cfg.sorts,
+      });
 
-      const records = (data && data.records) || [];
+      const records = data.records || [];
       const colors = getPaletteColors(cfg.palette);
 
       const categories = records.map(r => formatCategory(r.fields[cfg.xColumn]));
@@ -161,11 +152,7 @@ function buildChartOption(cfg, categories, series, colors) {
         ...baseOption,
         xAxis: { type: 'category', data: categories },
         yAxis: { type: 'value' },
-        series: series.map(s => ({
-          ...s,
-          type: 'scatter',
-          symbolSize: 10,
-        })),
+        series: series.map(s => ({ ...s, type: 'scatter', symbolSize: 10 })),
       };
 
     case 'treemap':
@@ -179,10 +166,7 @@ function buildChartOption(cfg, categories, series, colors) {
           height: '100%',
           top: cfg.chartTitle ? 40 : 10,
           label: { show: true, formatter: '{b}\n{c}' },
-          data: categories.map((cat, i) => ({
-            name: cat,
-            value: series[0].data[i],
-          })),
+          data: categories.map((cat, i) => ({ name: cat, value: series[0].data[i] })),
         }],
       };
 
@@ -206,11 +190,7 @@ function buildChartOption(cfg, categories, series, colors) {
         ...baseOption,
         xAxis: { type: 'value' },
         yAxis: { type: 'category', data: categories },
-        series: series.map(s => ({
-          ...s,
-          type: 'bar',
-          stack: 'total',
-        })),
+        series: series.map(s => ({ ...s, type: 'bar', stack: 'total' })),
       };
 
     case 'barStacked':
@@ -218,19 +198,13 @@ function buildChartOption(cfg, categories, series, colors) {
         ...baseOption,
         xAxis: { type: 'category', data: categories },
         yAxis: { type: 'value' },
-        series: series.map(s => ({
-          ...s,
-          type: 'bar',
-          stack: 'total',
-        })),
+        series: series.map(s => ({ ...s, type: 'bar', stack: 'total' })),
       };
 
     case 'bar3D':
       return {
         ...baseOption,
-        grid3D: {
-          viewControl: { autoRotate: false },
-        },
+        grid3D: { viewControl: { autoRotate: false } },
         xAxis3D: { type: 'category', data: categories },
         yAxis3D: { type: 'category', data: cfg.yColumns },
         zAxis3D: { type: 'value' },
@@ -245,9 +219,7 @@ function buildChartOption(cfg, categories, series, colors) {
     case 'hBar3D':
       return {
         ...baseOption,
-        grid3D: {
-          viewControl: { autoRotate: false },
-        },
+        grid3D: { viewControl: { autoRotate: false } },
         xAxis3D: { type: 'value' },
         yAxis3D: { type: 'category', data: categories },
         zAxis3D: { type: 'category', data: cfg.yColumns },
@@ -274,8 +246,6 @@ export async function createChartEditor(block, onChange, store) {
   const editor = createEl('div', 'dc-block-editor dc-chart-editor');
   const cfg = block.config;
 
-  editor.appendChild(createEl('p', 'dc-hint', '📊 Le graphique affiche les données de la table liée à ce widget.'));
-
   const typeLabel = createEl('label', 'dc-label', 'Type de graphique');
   const typeSelect = createEl('select', 'dc-select dc-select-full');
   CHART_TYPES.forEach(ct => {
@@ -297,12 +267,10 @@ export async function createChartEditor(block, onChange, store) {
   editor.appendChild(titleLabel);
   editor.appendChild(titleInput);
 
-  const tableSection = createEl('div', 'dc-table-section');
   const tableLabel = createEl('label', 'dc-label', 'Table source');
   const tableSelect = createEl('select', 'dc-select dc-select-full');
-  tableSection.appendChild(tableLabel);
-  tableSection.appendChild(tableSelect);
-  editor.appendChild(tableSection);
+  editor.appendChild(tableLabel);
+  editor.appendChild(tableSelect);
 
   const xColLabel = createEl('label', 'dc-label', 'Colonne X (catégories / libellés)');
   const xColSelect = createEl('select', 'dc-select dc-select-full');
@@ -327,12 +295,16 @@ export async function createChartEditor(block, onChange, store) {
   editor.appendChild(paletteSelect);
 
   let availableColumns = [];
-  let allTablesData = {};
 
   function renderColumnSelectors() {
     xColSelect.innerHTML = '';
     xColSelect.appendChild(createEl('option', '', '— Choisir une colonne —'));
     yColContainer.innerHTML = '';
+
+    if (availableColumns.length === 0) {
+      yColContainer.appendChild(createEl('p', 'dc-hint', '⬆️ Sélectionnez une table pour voir ses colonnes'));
+      return;
+    }
 
     availableColumns.forEach(col => {
       const opt = createEl('option', '', `${col.label || col.id} (${col.type})`);
@@ -363,36 +335,43 @@ export async function createChartEditor(block, onChange, store) {
 
   async function loadTables() {
     tableSelect.innerHTML = '';
-    tableSelect.appendChild(createEl('option', '', '⏳ Chargement...'));
+    tableSelect.appendChild(createEl('option', '', '⏳ Chargement des tables...'));
 
-    allTablesData = await getAllTablesWithColumns();
-    const tableIds = Object.keys(allTablesData);
-    console.log('[chart-block] Tables loaded:', tableIds);
-
-    const linkedId = await getLinkedTableId();
-    console.log('[chart-block] Linked table ID:', linkedId);
+    const tables = await listTables();
+    console.log('[chart-block] Tables:', tables.length, tables);
 
     tableSelect.innerHTML = '';
     tableSelect.appendChild(createEl('option', '', '— Choisir une table —'));
-    tableIds.forEach(tid => {
-      const opt = createEl('option', '', tid);
-      opt.value = tid;
+    tables.forEach(t => {
+      const opt = createEl('option', '', t);
+      opt.value = t;
       tableSelect.appendChild(opt);
     });
 
-    if (cfg.sourceTable && tableIds.includes(cfg.sourceTable)) {
+    const linkedId = await getLinkedTableId();
+    console.log('[chart-block] Linked:', linkedId);
+
+    if (cfg.sourceTable && tables.includes(cfg.sourceTable)) {
       tableSelect.value = cfg.sourceTable;
-      availableColumns = allTablesData[cfg.sourceTable] || [];
-      renderColumnSelectors();
-    } else if (linkedId && tableIds.includes(linkedId)) {
+      await loadColumns(cfg.sourceTable);
+    } else if (linkedId && tables.includes(linkedId)) {
       tableSelect.value = linkedId;
-      availableColumns = allTablesData[linkedId] || [];
-      renderColumnSelectors();
-      onChange({ sourceTable: linkedId, useLinkedTable: true });
-    } else if (tableIds.length > 0) {
-      availableColumns = [];
+      onChange({ sourceTable: linkedId });
+      await loadColumns(linkedId);
+    } else {
       renderColumnSelectors();
     }
+  }
+
+  async function loadColumns(tableId) {
+    xColSelect.innerHTML = '';
+    xColSelect.appendChild(createEl('option', '', '⏳ Chargement...'));
+    yColContainer.innerHTML = '';
+    yColContainer.appendChild(createEl('p', 'dc-hint', '⏳ Chargement des colonnes...'));
+
+    availableColumns = await getTableStructure(tableId);
+    console.log('[chart-block] Columns:', availableColumns.length);
+    renderColumnSelectors();
   }
 
   tableSelect.addEventListener('change', async () => {
@@ -400,11 +379,11 @@ export async function createChartEditor(block, onChange, store) {
     if (!tid) {
       availableColumns = [];
       renderColumnSelectors();
+      onChange({ sourceTable: null, xColumn: null, yColumns: [] });
       return;
     }
-    onChange({ sourceTable: tid, useLinkedTable: false, xColumn: null, yColumns: [] });
-    availableColumns = allTablesData[tid] || await getTableStructure(tid);
-    renderColumnSelectors();
+    onChange({ sourceTable: tid, xColumn: null, yColumns: [] });
+    await loadColumns(tid);
   });
 
   await loadTables();
