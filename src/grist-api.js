@@ -1,10 +1,11 @@
-import { debounce, escapeSqlValue, escapeSqlIdentifier } from './utils.js';
+import { debounce } from './utils.js';
 
 let _currentRecord = null;
 let _currentMappings = null;
 let _structureCache = {};
 let _linkedColumnsCache = null;
 let _linkedTableIdCache = null;
+let _dataCache = {};
 let _isReady = false;
 let _recordCallback = null;
 let _optionsCallback = null;
@@ -85,7 +86,7 @@ export async function listTables() {
   if (!g?.docApi) return [];
   try {
     const tables = await g.docApi.listTables();
-    console.log('[grist-api] listTables:', tables?.length, tables);
+    console.log('[grist-api] listTables:', tables?.length || 0);
     return tables || [];
   } catch (e) {
     console.error('[grist-api] listTables error:', e);
@@ -116,9 +117,8 @@ export async function getLinkedTableId() {
         if (typeof table.fetch === 'function') {
           try {
             const data = await table.fetch();
-            console.log('[grist-api] table.fetch() result keys:', data ? Object.keys(data) : 'null');
             if (data?.tableId) { _linkedTableIdCache = data.tableId; return data.tableId; }
-          } catch (e) { console.log('[grist-api] table.fetch() error:', e.message); }
+          } catch (e) {}
         }
       }
     } catch (e) { console.log('[grist-api] getTable() error:', e.message); }
@@ -148,10 +148,10 @@ export async function getLinkedTableId() {
       const userTables = tables.filter(t => !t.startsWith('_grist_'));
       const results = await Promise.all(userTables.map(async (tableId) => {
         try {
-          const res = await g.docApi.executeSQL({
-            sql: `SELECT id FROM ${escapeSqlIdentifier(tableId)} WHERE id = ${record.id} LIMIT 1`
-          });
-          if (res?.records?.length > 0) return tableId;
+          const data = await g.docApi.fetchTable(tableId);
+          if (data?.id && Array.isArray(data.id) && data.id.includes(record.id)) {
+            return tableId;
+          }
         } catch (e) {}
         return null;
       }));
@@ -164,48 +164,6 @@ export async function getLinkedTableId() {
   return null;
 }
 
-function findColumnObjects(obj, depth = 0, path = '', results = new Map()) {
-  if (depth > 5 || !obj || typeof obj !== 'object') return results;
-
-  if (Array.isArray(obj)) {
-    for (let i = 0; i < Math.min(obj.length, 3); i++) {
-      findColumnObjects(obj[i], depth + 1, `${path}[${i}]`, results);
-    }
-    return results;
-  }
-
-  for (const [key, val] of Object.entries(obj)) {
-    const currentPath = path ? `${path}.${key}` : key;
-
-    if (val && typeof val === 'object' && !Array.isArray(val)) {
-      const hasColShape = ('label' in val || 'type' in val || 'colId' in val) &&
-                          (typeof val.label === 'string' || typeof val.type === 'string');
-      if (hasColShape && !results.has(currentPath)) {
-        results.set(currentPath, {
-          id: val.colId || val.id || key,
-          label: val.label || val.colId || val.id || key,
-          type: val.type || 'Any',
-        });
-      }
-      findColumnObjects(val, depth + 1, currentPath, results);
-    }
-
-    if (key === 'fields' && val && typeof val === 'object' && !Array.isArray(val)) {
-      for (const [fieldKey, fieldVal] of Object.entries(val)) {
-        if (!results.has(`fields.${fieldKey}`)) {
-          results.set(`fields.${fieldKey}`, {
-            id: fieldKey,
-            label: fieldKey,
-            type: 'Any',
-          });
-        }
-      }
-    }
-  }
-
-  return results;
-}
-
 export async function getTableStructure(tableId) {
   if (!tableId) return [];
   if (_structureCache[tableId]) return _structureCache[tableId];
@@ -213,157 +171,32 @@ export async function getTableStructure(tableId) {
   const g = getGrist();
   if (!g?.docApi) return [];
 
-  console.log('[grist-api] ===== getTableStructure START:', tableId, '=====');
+  console.log('[grist-api] getTableStructure:', tableId);
 
-  const columns = [];
-  const seenIds = new Set();
-
-  function addColumn(id, label, type) {
-    if (!id || seenIds.has(id)) return;
-    seenIds.add(id);
-    columns.push({ id, label: label || id, type: type || 'Any' });
-  }
-
-  console.log('[grist-api] Method 1: docApi.fetchTable() - deep exploration');
   try {
     const data = await g.docApi.fetchTable(tableId);
-    console.log('[grist-api] fetchTable keys:', data ? Object.keys(data) : 'null');
-    console.log('[grist-api] fetchTable.colInfo type:', typeof data?.colInfo);
-    console.log('[grist-api] fetchTable.records is array:', Array.isArray(data?.records));
-    console.log('[grist-api] fetchTable.records length:', data?.records?.length || 0);
+    console.log('[grist-api] fetchTable keys:', Object.keys(data || {}));
 
-    if (data?.colInfo && typeof data.colInfo === 'object') {
-      console.log('[grist-api] colInfo sample (first 3):', JSON.stringify(Object.entries(data.colInfo).slice(0, 3)));
-      for (const [id, col] of Object.entries(data.colInfo)) {
-        addColumn(id, col?.label || id, col?.type);
-      }
-      console.log('[grist-api] Method 1: added', columns.length, 'from colInfo');
-    }
+    const columns = [];
+    const keys = Object.keys(data || {});
 
-    if (columns.length === 0 && data?.records?.length > 0) {
-      const firstRec = data.records[0];
-      console.log('[grist-api] first record:', JSON.stringify(firstRec).slice(0, 500));
-      if (firstRec.fields && typeof firstRec.fields === 'object') {
-        for (const id of Object.keys(firstRec.fields)) {
-          addColumn(id, id, 'Any');
-        }
-        console.log('[grist-api] Method 1: added', columns.length, 'from record.fields');
-      }
-    }
-
-    if (columns.length === 0) {
-      console.log('[grist-api] Method 1b: deep recursive search in fetchTable result');
-      const found = findColumnObjects(data);
-      console.log('[grist-api] Deep search found', found.size, 'potential columns');
-      for (const [path, col] of found) {
-        console.log('[grist-api]   found at', path, ':', col.id, '/', col.label);
-        addColumn(col.id, col.label, col.type);
-      }
-    }
-  } catch (e) {
-    console.log('[grist-api] Method 1 FAILED:', e.message);
-  }
-
-  if (columns.length === 0) {
-    console.log('[grist-api] Method 2: SQL SELECT * LIMIT 1');
-    try {
-      const result = await g.docApi.executeSQL({
-        sql: `SELECT * FROM ${escapeSqlIdentifier(tableId)} LIMIT 1`
+    for (const colId of keys) {
+      const val = data[colId];
+      columns.push({
+        id: colId,
+        label: colId,
+        type: Array.isArray(val) ? 'Any' : typeof val,
       });
-      console.log('[grist-api] SELECT * result keys:', result ? Object.keys(result) : 'null');
-      console.log('[grist-api] SELECT * result raw (first 3000 chars):', JSON.stringify(result).slice(0, 3000));
-
-      if (result?.records?.length > 0) {
-        const rec = result.records[0];
-        console.log('[grist-api] record keys:', Object.keys(rec));
-        if (rec.fields) {
-          console.log('[grist-api] record.fields keys:', Object.keys(rec.fields));
-          for (const id of Object.keys(rec.fields)) {
-            addColumn(id, id, 'Any');
-          }
-        }
-      }
-
-      if (columns.length === 0 && result?.fields) {
-        console.log('[grist-api] result.fields keys:', Object.keys(result.fields));
-        for (const [id, col] of Object.entries(result.fields)) {
-          addColumn(id, col?.label || id, col?.type);
-        }
-      }
-
-      if (columns.length === 0 && result?.colInfo) {
-        console.log('[grist-api] result.colInfo keys:', Object.keys(result.colInfo));
-        for (const [id, col] of Object.entries(result.colInfo)) {
-          addColumn(id, col?.label || id, col?.type);
-        }
-      }
-
-      if (columns.length === 0) {
-        const found = findColumnObjects(result);
-        console.log('[grist-api] Deep search in SQL result found', found.size, 'columns');
-        for (const [path, col] of found) {
-          addColumn(col.id, col.label, col.type);
-        }
-      }
-    } catch (e) {
-      console.log('[grist-api] Method 2 FAILED:', e.message);
     }
-  }
 
-  if (columns.length === 0) {
-    console.log('[grist-api] Method 3: SQL on _grist_Tables_column');
-    try {
-      const result = await g.docApi.executeSQL({
-        sql: `SELECT * FROM _grist_Tables_column`
-      });
-      console.log('[grist-api] All columns table records:', result?.records?.length || 0);
-      console.log('[grist-api] All columns raw (first 3000 chars):', JSON.stringify(result).slice(0, 3000));
-
-      if (result?.records?.length > 0) {
-        console.log('[grist-api] First col record:', JSON.stringify(result.records[0]).slice(0, 500));
-        const firstRec = result.records[0];
-        console.log('[grist-api] First col record fields keys:', firstRec.fields ? Object.keys(firstRec.fields) : 'none');
-      }
-    } catch (e) {
-      console.log('[grist-api] Method 3 FAILED:', e.message);
-    }
-  }
-
-  if (columns.length === 0) {
-    console.log('[grist-api] Method 4: SQL SELECT specific columns FROM table LIMIT 1');
-    try {
-      const result = await g.docApi.executeSQL({
-        sql: `SELECT id FROM ${escapeSqlIdentifier(tableId)} LIMIT 1`
-      });
-      console.log('[grist-api] SELECT id result:', JSON.stringify(result).slice(0, 1000));
-    } catch (e) {
-      console.log('[grist-api] Method 4 FAILED:', e.message);
-    }
-  }
-
-  if (columns.length === 0) {
-    console.log('[grist-api] Method 5: PRAGMA table_info via SQL');
-    try {
-      const result = await g.docApi.executeSQL({
-        sql: `SELECT name FROM pragma_table_info(${escapeSqlValue(tableId)})`
-      });
-      console.log('[grist-api] PRAGMA result:', JSON.stringify(result).slice(0, 2000));
-      if (result?.records?.length > 0) {
-        for (const r of result.records) {
-          const name = r.fields?.name || r.fields?.id;
-          if (name) addColumn(name, name, 'Any');
-        }
-      }
-    } catch (e) {
-      console.log('[grist-api] Method 5 FAILED:', e.message);
-    }
-  }
-
-  if (columns.length > 0) {
+    console.log('[grist-api] getTableStructure:', columns.length, 'columns:', columns.map(c => c.id).join(', '));
     _structureCache[tableId] = columns;
+    _dataCache[tableId] = data;
+    return columns;
+  } catch (e) {
+    console.error('[grist-api] getTableStructure error:', e.message);
+    return [];
   }
-  console.log('[grist-api] ===== getTableStructure END:', columns.length, 'columns:', columns.map(c => c.id).join(', '), '=====');
-  return columns;
 }
 
 export async function getLinkedTableColumns() {
@@ -385,110 +218,103 @@ export async function getCurrentRecordFields() {
   return _currentRecord.fields || _currentRecord;
 }
 
+function columnarToRecords(data) {
+  if (!data || typeof data !== 'object') return [];
+
+  const colKeys = Object.keys(data);
+  if (colKeys.length === 0) return [];
+
+  const idCol = data.id;
+  if (!Array.isArray(idCol)) return [];
+
+  const numRows = idCol.length;
+  const records = [];
+
+  for (let i = 0; i < numRows; i++) {
+    const fields = {};
+    for (const colId of colKeys) {
+      const colData = data[colId];
+      fields[colId] = Array.isArray(colData) ? colData[i] : colData;
+    }
+    records.push({
+      id: idCol[i],
+      fields: fields,
+    });
+  }
+
+  return records;
+}
+
 export async function fetchTableData(tableId, options = {}) {
   const { columns, filters, sorts, limit } = options;
   const g = getGrist();
-  if (!g || !tableId) return { records: [], fields: {} };
+  if (!g?.docApi || !tableId) return { records: [], fields: {} };
 
-  console.log('[grist-api] fetchTableData:', tableId, 'cols:', columns?.length, 'filters:', filters?.length, 'limit:', limit);
+  console.log('[grist-api] fetchTableData:', tableId);
 
   try {
-    let sql = `SELECT * FROM ${escapeSqlIdentifier(tableId)}`;
+    let data = _dataCache[tableId];
+    if (!data) {
+      data = await g.docApi.fetchTable(tableId);
+      _dataCache[tableId] = data;
+    }
+
+    let records = columnarToRecords(data);
+    console.log('[grist-api] fetchTableData:', records.length, 'records from columnar data');
+
+    if (columns?.length > 0) {
+      records = records.map(rec => ({
+        ...rec,
+        fields: Object.fromEntries(
+          Object.entries(rec.fields).filter(([k]) => columns.includes(k))
+        ),
+      }));
+    }
 
     if (filters?.length > 0) {
-      const whereClauses = filters
-        .filter(f => f.column && f.op && f.value !== undefined && f.value !== '')
-        .map(f => {
-          const col = escapeSqlIdentifier(f.column);
-          const val = escapeSqlValue(f.value);
-          switch (f.op) {
-            case 'eq': return `${col} = ${val}`;
-            case 'neq': return `${col} != ${val}`;
-            case 'gt': return `${col} > ${val}`;
-            case 'gte': return `${col} >= ${val}`;
-            case 'lt': return `${col} < ${val}`;
-            case 'lte': return `${col} <= ${val}`;
-            case 'contains': return `${col} LIKE '%' || ${val} || '%'`;
-            case 'startswith': return `${col} LIKE ${val} || '%'`;
-            case 'endswith': return `${col} LIKE '%' || ${val}`;
-            case 'isempty': return `(${col} IS NULL OR ${col} = '')`;
-            case 'isnotempty': return `(${col} IS NOT NULL AND ${col} != '')`;
-            default: return null;
-          }
-        })
-        .filter(Boolean);
-      if (whereClauses.length > 0) sql += ` WHERE ${whereClauses.join(' AND ')}`;
+      records = records.filter(rec => filters.every(f => {
+        const val = rec.fields[f.column];
+        const fval = f.value;
+        switch (f.op) {
+          case 'eq': return String(val) === String(fval);
+          case 'neq': return String(val) !== String(fval);
+          case 'gt': return parseFloat(val) > parseFloat(fval);
+          case 'gte': return parseFloat(val) >= parseFloat(fval);
+          case 'lt': return parseFloat(val) < parseFloat(fval);
+          case 'lte': return parseFloat(val) <= parseFloat(fval);
+          case 'contains': return String(val || '').toLowerCase().includes(String(fval).toLowerCase());
+          case 'startswith': return String(val || '').toLowerCase().startsWith(String(fval).toLowerCase());
+          case 'endswith': return String(val || '').toLowerCase().endsWith(String(fval).toLowerCase());
+          case 'isempty': return val === null || val === undefined || val === '';
+          case 'isnotempty': return val !== null && val !== undefined && val !== '';
+          default: return true;
+        }
+      }));
     }
 
     if (sorts?.length > 0) {
-      const orderClauses = sorts
-        .filter(s => s.column)
-        .map(s => `${escapeSqlIdentifier(s.column)} ${(s.dir || 'asc').toUpperCase()}`);
-      if (orderClauses.length > 0) sql += ` ORDER BY ${orderClauses.join(', ')}`;
+      records.sort((a, b) => {
+        for (const s of sorts) {
+          const av = a.fields[s.column];
+          const bv = b.fields[s.column];
+          const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+          if (cmp !== 0) return s.dir === 'desc' ? -cmp : cmp;
+        }
+        return 0;
+      });
     }
 
-    if (limit > 0) sql += ` LIMIT ${parseInt(limit, 10)}`;
+    if (limit > 0) records = records.slice(0, limit);
 
-    console.log('[grist-api] SQL:', sql.slice(0, 500));
-    const result = await g.docApi.executeSQL({ sql });
-    console.log('[grist-api] SQL result records:', result?.records?.length || 0);
-    return { records: result.records || [], fields: result.fields || {} };
+    const fields = {};
+    for (const colId of Object.keys(data || {})) {
+      fields[colId] = { label: colId, type: 'Any' };
+    }
+
+    return { records, fields };
   } catch (e) {
-    console.error('[grist-api] fetchTableData SQL error:', e.message);
-    try {
-      const data = await g.docApi.fetchTable(tableId);
-      let records = data.records || [];
-
-      if (filters?.length > 0) {
-        records = records.filter(rec => filters.every(f => {
-          const val = rec.fields[f.column];
-          const fval = f.value;
-          switch (f.op) {
-            case 'eq': return String(val) === String(fval);
-            case 'neq': return String(val) !== String(fval);
-            case 'gt': return parseFloat(val) > parseFloat(fval);
-            case 'gte': return parseFloat(val) >= parseFloat(fval);
-            case 'lt': return parseFloat(val) < parseFloat(fval);
-            case 'lte': return parseFloat(val) <= parseFloat(fval);
-            case 'contains': return String(val || '').toLowerCase().includes(String(fval).toLowerCase());
-            case 'startswith': return String(val || '').toLowerCase().startsWith(String(fval).toLowerCase());
-            case 'endswith': return String(val || '').toLowerCase().endsWith(String(fval).toLowerCase());
-            case 'isempty': return val === null || val === undefined || val === '';
-            case 'isnotempty': return val !== null && val !== undefined && val !== '';
-            default: return true;
-          }
-        }));
-      }
-
-      if (sorts?.length > 0) {
-        records.sort((a, b) => {
-          for (const s of sorts) {
-            const av = a.fields[s.column];
-            const bv = b.fields[s.column];
-            const cmp = av < bv ? -1 : av > bv ? 1 : 0;
-            if (cmp !== 0) return s.dir === 'desc' ? -cmp : cmp;
-          }
-          return 0;
-        });
-      }
-
-      if (limit > 0) records = records.slice(0, limit);
-
-      let selectedRecords = records;
-      if (columns?.length > 0) {
-        selectedRecords = records.map(rec => ({
-          ...rec,
-          fields: Object.fromEntries(
-            Object.entries(rec.fields).filter(([k]) => columns.includes(k))
-          ),
-        }));
-      }
-
-      return { records: selectedRecords, fields: data.colInfo || data.fields || {} };
-    } catch (e2) {
-      console.error('[grist-api] fetchTable fallback error:', e2);
-      return { records: [], fields: {} };
-    }
+    console.error('[grist-api] fetchTableData error:', e.message);
+    return { records: [], fields: {} };
   }
 }
 
@@ -502,6 +328,7 @@ export function clearCaches() {
   _structureCache = {};
   _linkedColumnsCache = null;
   _linkedTableIdCache = null;
+  _dataCache = {};
 }
 
 export const debouncedFetchTableData = debounce(fetchTableData, 300);
