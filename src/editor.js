@@ -75,6 +75,9 @@ export function createEditorPanel(block, store, onClose) {
   loadConfigEditor();
 
   const footer = createEl('div', 'dc-editor-footer');
+  footer.style.cssText = 'display:flex;gap:8px;justify-content:space-between;';
+
+  const leftFooter = createEl('div');
   const deleteBtn = createEl('button', 'dc-btn dc-btn-danger', '🗑 Supprimer le bloc');
   deleteBtn.addEventListener('click', () => {
     if (confirm('Supprimer ce bloc ?')) {
@@ -83,7 +86,18 @@ export function createEditorPanel(block, store, onClose) {
       if (onClose) onClose();
     }
   });
-  footer.appendChild(deleteBtn);
+  leftFooter.appendChild(deleteBtn);
+
+  const rightFooter = createEl('div');
+  const closeBtn2 = createEl('button', 'dc-btn dc-btn-primary', '✓ Terminé');
+  closeBtn2.addEventListener('click', () => {
+    overlay.remove();
+    if (onClose) onClose();
+  });
+  rightFooter.appendChild(closeBtn2);
+
+  footer.appendChild(leftFooter);
+  footer.appendChild(rightFooter);
   panel.appendChild(footer);
 
   overlay.appendChild(panel);

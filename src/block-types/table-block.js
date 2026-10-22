@@ -177,9 +177,13 @@ export async function createTableEditor(block, onChange, store) {
     tables = [selectedTableId];
   }
 
+  if (tables && tables.length > 0 && selectedTableId && !tables.includes(selectedTableId)) {
+    tables.unshift(selectedTableId);
+  }
+
   const debugInfo = createEl('div', 'dc-debug-info');
   debugInfo.style.cssText = 'font-size:11px;color:#888;background:#f5f5f5;padding:6px;border-radius:4px;margin-bottom:8px;font-family:monospace;';
-  debugInfo.textContent = `Debug: Grist=${isGristContext}, Tables=${tables ? tables.length : 'null'} [${(tables || []).join(', ')}], Selected=${selectedTableId || 'none'}`;
+  debugInfo.textContent = `Debug: Grist=${isGristContext}, Tables=${tables ? tables.length : 'null'}, Selected=${selectedTableId || 'none'}`;
   editor.appendChild(debugInfo);
 
   if (!tables || tables.length === 0) {
@@ -188,6 +192,9 @@ export async function createTableEditor(block, onChange, store) {
     return editor;
   }
 
+  const tableSection = createEl('div', 'dc-table-section');
+
+  const tableLabel = createEl('label', 'dc-label', 'Table source (toutes les tables du document)');
   const tableSelect = createEl('select', 'dc-select dc-select-full');
   tableSelect.appendChild(createEl('option', '', '— Choisir une table —'));
   tables.forEach(t => {
@@ -196,7 +203,10 @@ export async function createTableEditor(block, onChange, store) {
     tableSelect.appendChild(opt);
   });
 
-  if (!cfg.sourceTable && selectedTableId && tables.includes(selectedTableId)) {
+  tableSection.appendChild(tableLabel);
+  tableSection.appendChild(tableSelect);
+
+  if (!cfg.sourceTable && selectedTableId) {
     cfg.sourceTable = selectedTableId;
     onChange({ sourceTable: selectedTableId });
   }
@@ -217,34 +227,44 @@ export async function createTableEditor(block, onChange, store) {
       renderColumnCheckboxes();
       return;
     }
+    console.log('[table-block] loadColumns for:', tableId);
     availableColumns = await getTableStructure(tableId);
+    console.log('[table-block] getTableStructure returned:', availableColumns.length, 'columns');
     if (availableColumns.length === 0) {
+      console.log('[table-block] Trying fetchTableData fallback...');
       try {
         const data = await fetchTableData(tableId, { limit: 1 });
-        if (data.fields) {
+        console.log('[table-block] fetchTableData result:', data);
+        if (data.fields && Object.keys(data.fields).length > 0) {
           availableColumns = Object.entries(data.fields).map(([id, field]) => ({
             id,
             label: field.label || id,
             type: field.type || 'Any',
           }));
+          console.log('[table-block] Columns from fields:', availableColumns.length);
         } else if (data.records && data.records.length > 0) {
           availableColumns = Object.keys(data.records[0].fields).map(id => ({
             id,
             label: id,
             type: 'Any',
           }));
+          console.log('[table-block] Columns from record:', availableColumns.length);
         }
       } catch (e) {
         console.error('[table-block] loadColumns fallback error:', e);
       }
     }
+    console.log('[table-block] Final columns:', availableColumns);
     renderColumnCheckboxes();
   }
 
   function renderColumnCheckboxes() {
     columnsContainer.innerHTML = '';
     if (availableColumns.length === 0) {
-      columnsContainer.appendChild(createEl('p', 'dc-hint', 'Choisissez d\'abord une table'));
+      const msg = tableSelect.value
+        ? 'Aucune colonne trouvée pour cette table. Vérifiez la console (F12) pour les détails.'
+        : 'Choisissez d\'abord une table';
+      columnsContainer.appendChild(createEl('p', 'dc-hint', msg));
       return;
     }
     availableColumns.forEach(col => {
@@ -272,17 +292,17 @@ export async function createTableEditor(block, onChange, store) {
       columnsContainer.innerHTML = '';
       columnsContainer.appendChild(createEl('p', 'dc-hint', 'Chargement des colonnes...'));
       await loadColumns(tableSelect.value);
+    } else {
+      availableColumns = [];
+      renderColumnCheckboxes();
     }
   });
 
-  if (cfg.sourceTable) {
+  const initialTable = cfg.sourceTable || (selectedTableId && tables.includes(selectedTableId) ? selectedTableId : null);
+  if (initialTable) {
     columnsContainer.innerHTML = '';
     columnsContainer.appendChild(createEl('p', 'dc-hint', 'Chargement des colonnes...'));
-    await loadColumns(cfg.sourceTable);
-  } else if (selectedTableId && tables.includes(selectedTableId)) {
-    columnsContainer.innerHTML = '';
-    columnsContainer.appendChild(createEl('p', 'dc-hint', 'Chargement des colonnes...'));
-    await loadColumns(selectedTableId);
+    await loadColumns(initialTable);
   } else {
     renderColumnCheckboxes();
   }
@@ -320,8 +340,7 @@ export async function createTableEditor(block, onChange, store) {
   rowAggFuncSelect.value = cfg.rowAggregationFunc || 'sum';
   rowAggFuncSelect.addEventListener('change', () => onChange({ rowAggregationFunc: rowAggFuncSelect.value }));
 
-  editor.appendChild(createEl('label', 'dc-label', 'Table source'));
-  editor.appendChild(tableSelect);
+  editor.appendChild(tableSection);
   editor.appendChild(createEl('label', 'dc-label', 'Nom du tableau'));
   editor.appendChild(nameInput);
   editor.appendChild(createEl('label', 'dc-label', 'Colonnes à afficher'));
