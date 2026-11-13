@@ -196,6 +196,9 @@ class Store {
           sorts: [],
           dynamicFilter: false,
           dynamicFilterColumn: null,
+          dynamicSourceColumn: null,
+          groupBy: null,
+          groupFunc: 'sum',
           tableName: '',
           footerFunc: 'sum',
           footerLabel: 'Total',
@@ -212,6 +215,10 @@ class Store {
           palette: 'palette-1',
           filters: [],
           sorts: [],
+          dynamicFilter: false,
+          dynamicFilterColumn: null,
+          dynamicSourceColumn: null,
+          groupFunc: null,
           chartTitle: '',
         };
       case 'image':
@@ -220,6 +227,7 @@ class Store {
           sourceTable: null,
           imageColumn: null,
           imageIndex: 0,
+          captionColumn: null,
           caption: '',
         };
       default:

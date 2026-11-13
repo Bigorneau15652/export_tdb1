@@ -1,5 +1,6 @@
 import { createEl } from '../utils.js';
 import { fetchTableData, getTableStructure, listTables, getLinkedTableId } from '../grist-api.js';
+import { cellLines } from '../grouping.js';
 
 export async function renderImageBlock(block, container, store) {
   container.className = 'dc-block-content dc-image-block';
@@ -22,13 +23,20 @@ export async function renderImageBlock(block, container, store) {
   imgWrapper.appendChild(placeholder);
   container.appendChild(imgWrapper);
 
-  if (cfg.caption) {
-    container.appendChild(createEl('div', 'dc-image-caption', cfg.caption));
+  // The caption comes from a column of the same row when one is chosen (the line that matches
+  // the image shown, as a cell can hold several), otherwise from the fixed text.
+  const captionEl = createEl('div', 'dc-image-caption', cfg.caption || '');
+  captionEl.style.display = cfg.caption ? '' : 'none';
+  container.appendChild(captionEl);
+
+  function setCaption(textValue) {
+    captionEl.textContent = textValue || '';
+    captionEl.style.display = textValue ? '' : 'none';
   }
 
   async function update() {
     try {
-      const data = await fetchTableData(cfg.sourceTable, { limit: 1000 });
+      const data = await fetchTableData(cfg.sourceTable);
 
       const rec = data.records?.find(r => store.currentRecord && r.id === store.currentRecord.id);
       if (!rec) {
@@ -47,19 +55,25 @@ export async function renderImageBlock(block, container, store) {
       }
 
       let images = [];
-      if (Array.isArray(val)) {
+      if (typeof val === 'string' && !val.startsWith('data:')) {
+        // One address per line: the first line is the first image.
+        images = cellLines(val).filter(line => line.startsWith('http://') || line.startsWith('https://'));
+      } else if (Array.isArray(val)) {
         if (val[0] === 'L') images = val.slice(1);
         else if (typeof val[0] === 'number') images = val;
       } else if (typeof val === 'string') {
-        if (val.startsWith('http://') || val.startsWith('https://') || val.startsWith('data:')) {
-          images = [val];
-        }
+        if (val.startsWith('data:')) images = [val];
       } else if (typeof val === 'number') {
         images = [val];
       }
 
       const idx = Math.min(cfg.imageIndex || 0, Math.max(0, images.length - 1));
       const selected = images[idx];
+
+      if (cfg.captionColumn) {
+        const lines = cellLines(rec.fields[cfg.captionColumn]);
+        setCaption(lines[idx] !== undefined ? lines[idx] : (cfg.caption || ''));
+      }
 
       let imageUrl = null;
       if (typeof selected === 'number') {
@@ -127,6 +141,13 @@ export async function createImageEditor(block, onChange, store) {
   editor.appendChild(indexLabel);
   editor.appendChild(indexInput);
 
+  const captionColLabel = createEl('label', 'dc-label', 'Colonne de la légende (une ligne par image, la 1re ligne pour la 1re image)');
+  const captionColSelect = createEl('select', 'dc-select dc-select-full');
+  captionColSelect.appendChild(createEl('option', '', '— Aucune (texte fixe ci-dessous) —'));
+  captionColSelect.addEventListener('change', () => onChange({ captionColumn: captionColSelect.value || null }));
+  editor.appendChild(captionColLabel);
+  editor.appendChild(captionColSelect);
+
   const captionLabel = createEl('label', 'dc-label', 'Légende (affichée sous l\'image)');
   const captionInput = createEl('input', 'dc-input dc-input-full');
   captionInput.type = 'text';
@@ -180,6 +201,14 @@ export async function createImageEditor(block, onChange, store) {
       colSelect.appendChild(opt);
     });
     colSelect.value = cfg.imageColumn || '';
+    captionColSelect.innerHTML = '';
+    captionColSelect.appendChild(createEl('option', '', '— Aucune (texte fixe ci-dessous) —'));
+    columns.forEach(col => {
+      const opt = createEl('option', '', `${col.label || col.id} (${col.type})`);
+      opt.value = col.id;
+      captionColSelect.appendChild(opt);
+    });
+    captionColSelect.value = cfg.captionColumn || '';
   }
 
   colSelect.addEventListener('change', () => onChange({ imageColumn: colSelect.value || null }));

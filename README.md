@@ -49,9 +49,16 @@ Le texte commence par un en-tête `format` (toujours `grist-dashboard-composer`)
 }
 ```
 
+Réglages ajoutés pour suivre la ligne active de Grist et regrouper des lignes :
+- Tableau et graphique : `dynamicFilter` (true) avec `dynamicFilterColumn` (colonne de la table source) et `dynamicSourceColumn` (champ de la ligne active comparé à cette colonne ; `id` désigne le numéro de la ligne). Exemple : une table d'étages qui a une colonne `Batiment` pointant vers la table des bâtiments, dont une ligne est active : `dynamicFilterColumn: "Batiment"` et `dynamicSourceColumn: "id"`. Sans `dynamicSourceColumn`, la colonne de même nom de la ligne active est utilisée (anciennes mises en page). Tant qu'aucune ligne n'est active, le bloc reste vide.
+- Tableau : `groupBy` (colonne dont les valeurs identiques deviennent une seule ligne) et `groupFunc` (`sum`, `avg`, `min`, `max` ou `count`, pour les autres colonnes). Une colonne peut avoir sa propre fonction : `{ "id": "id", "label": "Nombre", "func": "count" }` donne le nombre de lignes du groupe. Le total du bas additionne les lignes regroupées.
+- Graphique : `groupFunc` regroupe les lignes qui ont la même valeur dans la colonne X (`xColumn`).
+- Colonne de tableau : `format` vaut `date` (date Grist affichée JJ/MM/AAAA) ou `plain` (nombre sans séparateur de milliers, utile pour une année).
+- Image : la cellule peut contenir plusieurs adresses, une par ligne ; la première ligne est la première image (`imageIndex` choisit une autre). `captionColumn` désigne une colonne dont la ligne de même rang donne la légende.
+
 Dans `columns`, une colonne peut s'écrire simplement par son identifiant, ou `{ "id": "...", "label": "..." }` pour changer son titre. Formats de page : `A3`, `A4`, `A5`, `screen`, `square`, `custom`.
 
-Tests : `npm test` vérifie la lecture et le contrôle du JSON. Après `npm run build`, `node tests/e2e-io.mjs` vérifie la fenêtre dans un navigateur (variable `PLAYWRIGHT_PATH` pour indiquer l'emplacement de Playwright).
+Tests : `npm test` vérifie la lecture et le contrôle du JSON ainsi que le regroupement. Après `npm run build`, `node tests/e2e-io.mjs` vérifie la fenêtre d'export et d'import, et `node tests/e2e-blocks.mjs` vérifie les blocs avec un Grist simulé, dans un navigateur (variable `PLAYWRIGHT_PATH` pour indiquer l'emplacement de Playwright).
 
 ## 🛠️ Développement local
 

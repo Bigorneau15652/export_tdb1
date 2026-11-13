@@ -19,6 +19,7 @@ export const FILTER_OPS = [
   `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `contains`, `startswith`, `endswith`, `isempty`, `isnotempty`
 ];
 export const AGGREGATIONS = [`sum`, `avg`, `min`, `max`, `count`];
+export const COLUMN_FORMATS = [`date`, `plain`];
 
 const MAX_TEXT_LENGTH = 200000;
 const MAX_NAME_LENGTH = 200;
@@ -61,7 +62,8 @@ function list(value, max) {
   return Array.isArray(value) ? value.slice(0, max) : [];
 }
 
-// A column of a table block: { id, label }. A bare text is accepted for { id: text, label: text }.
+// A column of a table block: { id, label }, with `format` (date, or plain for a number shown without thousands separator, like a year) and `func` (how the column is
+// aggregated when the rows are grouped) when given. A bare text is accepted for { id, label }.
 function column(value) {
   if (typeof value === `string`) {
     const id = name(value);
@@ -70,7 +72,10 @@ function column(value) {
   if (!value || typeof value !== `object`) return null;
   const id = name(value.id);
   if (!id) return null;
-  return { id, label: text(value.label, MAX_NAME_LENGTH) || id };
+  const result = { id, label: text(value.label, MAX_NAME_LENGTH) || id };
+  if (COLUMN_FORMATS.includes(value.format)) result.format = value.format;
+  if (AGGREGATIONS.includes(value.func)) result.func = value.func;
+  return result;
 }
 
 function filter(value) {
@@ -111,6 +116,9 @@ const BLOCK_CONFIG = {
       sorts: compact(list(config.sorts, MAX_SORTS), sort),
       dynamicFilter: flag(config.dynamicFilter, false),
       dynamicFilterColumn: name(config.dynamicFilterColumn),
+      dynamicSourceColumn: name(config.dynamicSourceColumn),
+      groupBy: name(config.groupBy),
+      groupFunc: oneOf(config.groupFunc, AGGREGATIONS, `sum`),
       tableName: text(config.tableName, MAX_NAME_LENGTH),
       footerFunc: oneOf(config.footerFunc, AGGREGATIONS, null),
       footerLabel: text(config.footerLabel, MAX_NAME_LENGTH, `Total`),
@@ -128,6 +136,10 @@ const BLOCK_CONFIG = {
       palette: oneOf(config.palette, Object.keys(PALETTES), `palette-1`),
       filters: compact(list(config.filters, MAX_FILTERS), filter),
       sorts: compact(list(config.sorts, MAX_SORTS), sort),
+      dynamicFilter: flag(config.dynamicFilter, false),
+      dynamicFilterColumn: name(config.dynamicFilterColumn),
+      dynamicSourceColumn: name(config.dynamicSourceColumn),
+      groupFunc: oneOf(config.groupFunc, AGGREGATIONS, null),
       chartTitle: text(config.chartTitle, MAX_NAME_LENGTH)
     };
   },
@@ -137,6 +149,7 @@ const BLOCK_CONFIG = {
       sourceTable: name(config.sourceTable),
       imageColumn: name(config.imageColumn),
       imageIndex: Math.round(number(config.imageIndex, 0, 99, 0)),
+      captionColumn: name(config.captionColumn),
       caption: text(config.caption, MAX_NAME_LENGTH)
     };
   }

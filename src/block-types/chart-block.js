@@ -3,6 +3,7 @@ import 'echarts-gl';
 import { createEl } from '../utils.js';
 import { fetchTableData, fetchLinkedTableData, getTableStructure, getLinkedTableColumns, listTables, getLinkedTableId } from '../grist-api.js';
 import { getPaletteColors, PALETTES } from '../palettes.js';
+import { activeValue, groupRecords } from '../grouping.js';
 
 const CHART_TYPES = [
   { value: 'barGrouped', label: 'Histogramme groupé', icon: '📊' },
@@ -39,13 +40,26 @@ export async function renderChartBlock(block, container, store) {
 
   async function update() {
     try {
+      // The chart can follow the active Grist row like a table: the column of the source table
+      // is compared with a field of the active row (`id` for its row number).
+      let dynamic = null;
+      if (cfg.dynamicFilter && cfg.dynamicFilterColumn) {
+        const value = activeValue(store.currentRecord, cfg.dynamicSourceColumn || cfg.dynamicFilterColumn);
+        if (value !== undefined && value !== null) dynamic = { column: cfg.dynamicFilterColumn, value };
+        else if (cfg.dynamicSourceColumn) dynamic = { column: cfg.dynamicFilterColumn, value: null };
+      }
       const data = await fetchTableData(cfg.sourceTable, {
         columns: [cfg.xColumn, ...cfg.yColumns],
         filters: cfg.filters,
         sorts: cfg.sorts,
+        dynamic,
       });
 
-      const records = data.records || [];
+      // With a grouping function, the rows that share the same X value become one point.
+      let records = data.records || [];
+      if (cfg.groupFunc) {
+        records = groupRecords(records, cfg.xColumn, [{ id: cfg.xColumn }, ...cfg.yColumns.map(id => ({ id, func: cfg.groupFunc }))], cfg.groupFunc);
+      }
       const colors = getPaletteColors(cfg.palette);
 
       const categories = records.map(r => formatCategory(r.fields[cfg.xColumn]));
@@ -294,9 +308,74 @@ export async function createChartEditor(block, onChange, store) {
   editor.appendChild(paletteLabel);
   editor.appendChild(paletteSelect);
 
+  // Grouping: the rows that share the same X value become one point.
+  const groupLabel = createEl('label', 'dc-label', 'Regrouper les lignes qui ont la même valeur en X (optionnel)');
+  const groupSelect = createEl('select', 'dc-select dc-select-full');
+  [{ value: '', label: '— Ne pas regrouper —' },
+    { value: 'sum', label: 'Somme des colonnes Y' }, { value: 'avg', label: 'Moyenne des colonnes Y' },
+    { value: 'min', label: 'Minimum des colonnes Y' }, { value: 'max', label: 'Maximum des colonnes Y' },
+    { value: 'count', label: 'Nombre de lignes' }].forEach(f => {
+    const opt = createEl('option', '', f.label);
+    opt.value = f.value;
+    groupSelect.appendChild(opt);
+  });
+  groupSelect.value = cfg.groupFunc || '';
+  groupSelect.addEventListener('change', () => onChange({ groupFunc: groupSelect.value || null }));
+  editor.appendChild(groupLabel);
+  editor.appendChild(groupSelect);
+
+  // Following the active Grist row, as for a table.
+  const dynamicBox = createEl('div', 'dc-dynamic-section');
+  dynamicBox.style.cssText = 'margin-top:16px;padding:12px;border:1px solid #c3dafe;background:#ebf5ff;border-radius:6px;';
+  const dynamicTitle = createEl('div', 'dc-section-title', 'Liaison dynamique avec la ligne Grist active');
+  dynamicTitle.style.cssText = 'font-weight:bold;margin-bottom:8px;color:#2b6cb0;';
+  dynamicBox.appendChild(dynamicTitle);
+  const dynamicCheckLabel = createEl('label', 'dc-checkbox-label');
+  const dynamicCheck = createEl('input');
+  dynamicCheck.type = 'checkbox';
+  dynamicCheck.checked = !!cfg.dynamicFilter;
+  dynamicCheckLabel.appendChild(dynamicCheck);
+  dynamicCheckLabel.appendChild(createEl('span', '', ' Ne garder que les lignes liées à la ligne active'));
+  dynamicBox.appendChild(dynamicCheckLabel);
+  const dynamicFields = createEl('div', 'dc-dynamic-config');
+  dynamicFields.style.cssText = 'margin-left:20px;margin-top:8px;';
+  const filterColSelect = createEl('select', 'dc-select dc-select-full');
+  const sourceColSelect = createEl('select', 'dc-select dc-select-full');
+  dynamicFields.appendChild(createEl('label', 'dc-label', 'Colonne de la table source (ex: Batiment)'));
+  dynamicFields.appendChild(filterColSelect);
+  dynamicFields.appendChild(createEl('label', 'dc-label', 'Champ de la ligne active à comparer (id = numéro de la ligne)'));
+  dynamicFields.appendChild(sourceColSelect);
+  dynamicBox.appendChild(dynamicFields);
+  editor.appendChild(dynamicBox);
+
+  function updateDynamicVisibility() {
+    dynamicFields.style.display = dynamicCheck.checked ? 'block' : 'none';
+  }
+  dynamicCheck.addEventListener('change', () => {
+    onChange({ dynamicFilter: dynamicCheck.checked });
+    updateDynamicVisibility();
+  });
+  updateDynamicVisibility();
+  filterColSelect.addEventListener('change', () => onChange({ dynamicFilterColumn: filterColSelect.value || null }));
+  sourceColSelect.addEventListener('change', () => onChange({ dynamicSourceColumn: sourceColSelect.value || null }));
+
+  function fillSelect(select, firstLabel, ids, current) {
+    select.innerHTML = '';
+    select.appendChild(createEl('option', '', firstLabel));
+    const all = new Set(ids);
+    if (current) all.add(current);
+    all.forEach(id => {
+      const opt = createEl('option', '', id);
+      opt.value = id;
+      select.appendChild(opt);
+    });
+    select.value = current || '';
+  }
+
   let availableColumns = [];
 
   function renderColumnSelectors() {
+    fillSelect(filterColSelect, '— Choisir la colonne —', availableColumns.map(c => c.id), cfg.dynamicFilterColumn);
     xColSelect.innerHTML = '';
     xColSelect.appendChild(createEl('option', '', '— Choisir une colonne —'));
     yColContainer.innerHTML = '';
@@ -386,6 +465,8 @@ export async function createChartEditor(block, onChange, store) {
     await loadColumns(tid);
   });
 
+  const activeColumns = await getLinkedTableColumns();
+  fillSelect(sourceColSelect, '— Même nom que la colonne de la table source —', ['id', ...activeColumns.map(c => c.id)], cfg.dynamicSourceColumn);
   await loadTables();
 
   return editor;
