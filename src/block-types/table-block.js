@@ -1,5 +1,6 @@
 import { createEl, formatNumber, aggregate } from '../utils.js';
-import { fetchTableData, fetchLinkedTableData, getTableStructure, listTables, getLinkedTableId, getCurrentRecord } from '../grist-api.js';
+import { fetchTableData, fetchLinkedTableData, getTableStructure, getLinkedTableColumns, listTables, getLinkedTableId, getCurrentRecord } from '../grist-api.js';
+import { activeValue, groupRecords, formatGristDate } from '../grouping.js';
 
 const AGGREGATION_FUNCS = [
   { value: 'sum', label: 'Somme' },
@@ -68,19 +69,27 @@ export async function renderTableBlock(block, container, store) {
     tbody.innerHTML = '';
     tfoot.innerHTML = '';
 
+    // The row of the active Grist row: the column of this table is compared with a field of the
+    // active row (dynamicSourceColumn, `id` for its row number), or with the column of the same
+    // name when no field is given (earlier layouts).
+    const dynamic = dynamicFilterOf(cfg, store);
+    const wantedColumns = [...new Set([...cfg.columns.map(c => c.id), ...(cfg.groupBy ? [cfg.groupBy] : [])])];
+
     let currentData;
     try {
       if (cfg.useLinkedTable !== false && !cfg.sourceTable) {
         currentData = await fetchLinkedTableData({
-          columns: cfg.columns.map(c => c.id),
+          columns: wantedColumns,
           filters: cfg.filters,
           sorts: cfg.sorts,
+          dynamic: dynamic && dynamic.value !== undefined ? dynamic : null,
         });
       } else if (cfg.sourceTable) {
         currentData = await fetchTableData(cfg.sourceTable, {
-          columns: cfg.columns.map(c => c.id),
+          columns: wantedColumns,
           filters: cfg.filters,
           sorts: cfg.sorts,
+          dynamic: dynamic && dynamic.value !== undefined ? dynamic : null,
         });
       } else {
         container.innerHTML = '';
@@ -95,20 +104,8 @@ export async function renderTableBlock(block, container, store) {
 
     let records = currentData.records;
 
-    if (cfg.dynamicFilter && cfg.dynamicFilterColumn && store.currentRecord) {
-      const currentRec = store.currentRecord;
-      const currentVal = currentRec.fields?.[cfg.dynamicFilterColumn] || currentRec[cfg.dynamicFilterColumn];
-      if (currentVal !== undefined && currentVal !== null) {
-        const beforeCount = records.length;
-        records = records.filter(r => {
-          const val = r.fields[cfg.dynamicFilterColumn];
-          if (Array.isArray(val)) {
-            return val.some(v => String(v) === String(currentVal));
-          }
-          return String(val) === String(currentVal);
-        });
-        console.log(`[table-block] Dynamic filter on ${cfg.dynamicFilterColumn}=${currentVal}: ${beforeCount} → ${records.length} records`);
-      }
+    if (cfg.groupBy) {
+      records = groupRecords(records, cfg.groupBy, cfg.columns.map(c => ({ id: c.id, func: c.func })), cfg.groupFunc || 'sum');
     }
 
     for (const rec of records) {
@@ -116,7 +113,7 @@ export async function renderTableBlock(block, container, store) {
       cfg.columns.forEach(col => {
         const val = rec.fields[col.id];
         const cell = createEl('td', 'dc-td');
-        cell.textContent = formatCellValue(val);
+        cell.textContent = formatCellValue(val, col.format);
         row.appendChild(cell);
       });
       if (cfg.rowAggregation) {
@@ -171,7 +168,24 @@ export async function renderTableBlock(block, container, store) {
   };
 }
 
-function formatCellValue(val) {
+// What the table follows: { column, value } for the active row, or null when it follows nothing.
+// value is undefined while the field is unknown and the layout is an earlier one (no filtering).
+function dynamicFilterOf(cfg, store) {
+  if (!cfg.dynamicFilter || !cfg.dynamicFilterColumn) return null;
+  const field = cfg.dynamicSourceColumn || cfg.dynamicFilterColumn;
+  const value = activeValue(store.currentRecord, field);
+  if (value === undefined || value === null) {
+    return cfg.dynamicSourceColumn ? { column: cfg.dynamicFilterColumn, value: null } : null;
+  }
+  return { column: cfg.dynamicFilterColumn, value };
+}
+
+function formatCellValue(val, format) {
+  if (format === 'date') {
+    const date = formatGristDate(val);
+    if (date) return date;
+  }
+  if (format === 'plain' && val !== null && val !== undefined && val !== '' && !Array.isArray(val)) return String(val);
   if (val === null || val === undefined || val === '') return '—';
   if (typeof val === 'number') return formatNumber(val);
   if (typeof val === 'boolean') return val ? 'Oui' : 'Non';
@@ -251,6 +265,29 @@ export async function createTableEditor(block, onChange, store) {
 
   dynamicConfig.appendChild(dynamicColLabel);
   dynamicConfig.appendChild(dynamicColSelect);
+
+  // The field of the active Grist row that is compared with that column (`id` is its row number,
+  // for a column of this table that points to the table of the active row).
+  const sourceColLabel = createEl('label', 'dc-label', 'Champ de la ligne active à comparer (id = numéro de la ligne)');
+  const sourceColSelect = createEl('select', 'dc-select dc-select-full');
+  sourceColSelect.appendChild(createEl('option', '', '— Même nom que la colonne de liaison —'));
+  sourceColSelect.addEventListener('change', () => onChange({ dynamicSourceColumn: sourceColSelect.value || null }));
+  dynamicConfig.appendChild(sourceColLabel);
+  dynamicConfig.appendChild(sourceColSelect);
+
+  async function fillActiveColumns() {
+    const activeColumns = await getLinkedTableColumns();
+    sourceColSelect.innerHTML = '';
+    sourceColSelect.appendChild(createEl('option', '', '— Même nom que la colonne de liaison —'));
+    const ids = new Set(['id', ...activeColumns.map(c => c.id)]);
+    if (cfg.dynamicSourceColumn) ids.add(cfg.dynamicSourceColumn);
+    ids.forEach(id => {
+      const opt = createEl('option', '', id);
+      opt.value = id;
+      sourceColSelect.appendChild(opt);
+    });
+    sourceColSelect.value = cfg.dynamicSourceColumn || '';
+  }
   dynamicSection.appendChild(dynamicConfig);
 
   function updateDynamicVisibility() {
@@ -259,6 +296,29 @@ export async function createTableEditor(block, onChange, store) {
   updateDynamicVisibility();
 
   editor.appendChild(dynamicSection);
+
+  const groupSection = createEl('div', 'dc-group-section');
+  groupSection.style.cssText = 'margin-top:16px;padding-top:12px;border-top:1px solid #ddd;';
+  const groupTitle = createEl('div', 'dc-section-title', 'Regrouper les lignes (optionnel)');
+  groupTitle.style.cssText = 'font-weight:bold;margin-bottom:8px;';
+  groupSection.appendChild(groupTitle);
+  groupSection.appendChild(createEl('p', 'dc-hint', 'Les lignes qui ont la même valeur dans la colonne choisie deviennent une seule ligne. Les autres colonnes sont agrégées avec la fonction choisie. Pour compter les lignes, choisissez la fonction Nombre de lignes.'));
+  const groupColSelect = createEl('select', 'dc-select dc-select-full');
+  groupColSelect.appendChild(createEl('option', '', '— Ne pas regrouper —'));
+  groupColSelect.addEventListener('change', () => onChange({ groupBy: groupColSelect.value || null }));
+  const groupFuncSelect = createEl('select', 'dc-select dc-select-full');
+  [...AGGREGATION_FUNCS.filter(f => f.value !== 'count'), { value: 'count', label: 'Nombre de lignes' }].forEach(f => {
+    const opt = createEl('option', '', f.label);
+    opt.value = f.value;
+    groupFuncSelect.appendChild(opt);
+  });
+  groupFuncSelect.value = cfg.groupFunc || 'sum';
+  groupFuncSelect.addEventListener('change', () => onChange({ groupFunc: groupFuncSelect.value }));
+  groupSection.appendChild(createEl('label', 'dc-label', 'Regrouper par la colonne'));
+  groupSection.appendChild(groupColSelect);
+  groupSection.appendChild(createEl('label', 'dc-label', 'Fonction pour les autres colonnes'));
+  groupSection.appendChild(groupFuncSelect);
+  editor.appendChild(groupSection);
 
   const filterSection = createEl('div', 'dc-filter-section');
   filterSection.style.cssText = 'margin-top:16px;padding-top:12px;border-top:1px solid #ddd;';
@@ -554,6 +614,15 @@ export async function createTableEditor(block, onChange, store) {
     });
     dynamicColSelect.value = cfg.dynamicFilterColumn || '';
 
+    groupColSelect.innerHTML = '';
+    groupColSelect.appendChild(createEl('option', '', '— Ne pas regrouper —'));
+    availableColumns.forEach(col => {
+      const opt = createEl('option', '', col.label || col.id);
+      opt.value = col.id;
+      groupColSelect.appendChild(opt);
+    });
+    groupColSelect.value = cfg.groupBy || '';
+
     renderFilters();
     renderSorts();
     renderColumns();
@@ -601,6 +670,7 @@ export async function createTableEditor(block, onChange, store) {
     await loadColumns(tid);
   });
 
+  await fillActiveColumns();
   await loadTables();
 
   return editor;

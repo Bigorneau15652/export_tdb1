@@ -1,6 +1,7 @@
 import { deepClone, generateId, debounce } from './utils.js';
 import { setOption, getOptions } from './grist-api.js';
 import { PAGE_FORMATS, getPageDimensions } from './page-formats.js';
+import { buildExport, parseImport } from './config-io.js';
 
 const OPTION_KEY = 'dashboardConfig';
 
@@ -195,6 +196,9 @@ class Store {
           sorts: [],
           dynamicFilter: false,
           dynamicFilterColumn: null,
+          dynamicSourceColumn: null,
+          groupBy: null,
+          groupFunc: 'sum',
           tableName: '',
           footerFunc: 'sum',
           footerLabel: 'Total',
@@ -211,6 +215,10 @@ class Store {
           palette: 'palette-1',
           filters: [],
           sorts: [],
+          dynamicFilter: false,
+          dynamicFilterColumn: null,
+          dynamicSourceColumn: null,
+          groupFunc: null,
           chartTitle: '',
         };
       case 'image':
@@ -219,6 +227,7 @@ class Store {
           sourceTable: null,
           imageColumn: null,
           imageIndex: 0,
+          captionColumn: null,
           caption: '',
         };
       default:
@@ -322,20 +331,23 @@ class Store {
   }
 
   exportConfig() {
-    return JSON.stringify(this.config, null, 2);
+    return buildExport(this.config);
   }
 
+  // Replaces the whole layout by a layout already checked (see config-io.js).
+  async replaceConfig(config) {
+    this.config = deepClone(config);
+    this.selectedBlockId = null;
+    await this.save();
+    this.notify();
+  }
+
+  // Reads a text, checks it, and replaces the layout. Returns { ok, error?, notes? }.
   async importConfig(jsonString) {
-    try {
-      const imported = JSON.parse(jsonString);
-      this.config = { ...deepClone(defaultConfig), ...imported };
-      await this.save();
-      this.notify();
-      return true;
-    } catch (e) {
-      console.error('[store] Import failed:', e);
-      return false;
-    }
+    const result = parseImport(jsonString);
+    if (result.error) return { ok: false, error: result.error };
+    await this.replaceConfig(result.config);
+    return { ok: true, notes: result.notes };
   }
 }
 

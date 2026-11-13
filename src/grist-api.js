@@ -1,4 +1,5 @@
 import { debounce } from './utils.js';
+import { filterByActive } from './grouping.js';
 
 let _currentRecord = null;
 let _currentMappings = null;
@@ -128,6 +129,12 @@ export async function getLinkedTableId() {
     try {
       const st = g.selectedTable;
       if (typeof st === 'string') { _linkedTableIdCache = st; return st; }
+      if (st && typeof st.getTableId === 'function') {
+        try {
+          const id = await st.getTableId();
+          if (typeof id === 'string' && id) { _linkedTableIdCache = id; return id; }
+        } catch (e) {}
+      }
       if (st && typeof st === 'object') {
         for (const key of ['tableId', '_tableId', 'id']) {
           if (typeof st[key] === 'string' && st[key]) {
@@ -246,7 +253,7 @@ function columnarToRecords(data) {
 }
 
 export async function fetchTableData(tableId, options = {}) {
-  const { columns, filters, sorts, limit } = options;
+  const { columns, filters, sorts, limit, dynamic } = options;
   const g = getGrist();
   if (!g?.docApi || !tableId) return { records: [], fields: {} };
 
@@ -262,14 +269,9 @@ export async function fetchTableData(tableId, options = {}) {
     let records = columnarToRecords(data);
     console.log('[grist-api] fetchTableData:', records.length, 'records from columnar data');
 
-    if (columns?.length > 0) {
-      records = records.map(rec => ({
-        ...rec,
-        fields: Object.fromEntries(
-          Object.entries(rec.fields).filter(([k]) => columns.includes(k))
-        ),
-      }));
-    }
+    // The row of the active Grist row first, then the fixed filters, then the sort; the columns
+    // are narrowed last so that a filter or a sort can use a column that is not displayed.
+    if (dynamic) records = filterByActive(records, dynamic.column, dynamic.value);
 
     if (filters?.length > 0) {
       records = records.filter(rec => filters.every(f => {
@@ -302,6 +304,15 @@ export async function fetchTableData(tableId, options = {}) {
         }
         return 0;
       });
+    }
+
+    if (columns?.length > 0) {
+      records = records.map(rec => ({
+        ...rec,
+        fields: Object.fromEntries(
+          Object.entries(rec.fields).filter(([k]) => columns.includes(k))
+        ),
+      }));
     }
 
     if (limit > 0) records = records.slice(0, limit);

@@ -581,3 +581,24 @@ body {
     display: none !important;
   }
 }
+
+
+/* Export / import window */
+.dc-io-panel { max-width: 720px; color-scheme: light; }
+.dc-io-body { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.dc-io-help { margin: 0; font-size: 13px; line-height: 1.5; color: #222; }
+.dc-io-text {
+  width: 100%; box-sizing: border-box; min-height: 220px; padding: 8px;
+  font-family: monospace; font-size: 12px; line-height: 1.4;
+  background: #fff; color: #111; border: 1px solid #8a93a3; border-radius: 6px;
+}
+.dc-io-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.dc-io-message {
+  padding: 10px 12px; border-radius: 6px; font-size: 13px; line-height: 1.5;
+  white-space: normal; overflow-wrap: anywhere; border: 1px solid transparent;
+}
+.dc-io-message p { margin: 0 0 4px; }
+.dc-io-message p:last-child { margin-bottom: 0; }
+.dc-io-info { background: #e6f0ff; color: #0b2a5b; border-color: #8fb2ee; }
+.dc-io-warning { background: #fff1cc; color: #4d3500; border-color: #e0b34a; }
+.dc-io-error { background: #fde3e3; color: #6b0d0d; border-color: #e08f8f; }

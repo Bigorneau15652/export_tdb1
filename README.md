@@ -20,6 +20,46 @@ Widget Grist générique — Compositeur universel de tableaux de bord imprimabl
 3. Collez l'URL : `https://bigorneau15652.github.io/export_tdb1/`
 4. Accordez l'accès **full** au document
 
+## Export et import de la mise en page
+
+Le bouton « Exporter / Importer » de la barre d'outils ouvre une fenêtre. « Exporter » affiche la mise en page actuelle (format de page, pages, blocs avec leur position, leur taille et leurs réglages) sous forme de texte JSON, que l'on peut copier ou télécharger. Les données des tables ne sont pas exportées. Pour importer, collez un texte JSON ou choisissez un fichier, cliquez sur « Vérifier l'import » (un compte rendu indique ce qui a été corrigé ou ignoré), puis sur « Remplacer la mise en page actuelle ». Exportez l'ancienne mise en page avant si vous voulez la garder.
+
+Le texte commence par un en-tête `format` (toujours `grist-dashboard-composer`) et `version` (actuellement 1). Chaque bloc a un `type` (`text`, `table`, `chart` ou `image`), une position `x` et `y` et une taille `width` et `height` en pixels de page, et un objet `config` dont les champs sont ceux de la fenêtre de réglage du bloc. L'import contrôle chaque champ : un type inconnu, un champ inconnu, un identifiant non conforme ou une valeur hors limites sont écartés ou remplacés, jamais exécutés. Exemple minimal :
+
+```json
+{
+  "format": "grist-dashboard-composer",
+  "version": 1,
+  "config": {
+    "pageFormat": "A4",
+    "pageOrientation": "landscape",
+    "pages": [
+      {
+        "id": "page-1",
+        "blocks": [
+          { "id": "titre", "type": "text", "x": 40, "y": 40, "width": 600, "height": 60,
+            "config": { "markdown": "# Titre" } },
+          { "id": "liste", "type": "table", "x": 40, "y": 120, "width": 600, "height": 250,
+            "config": { "sourceTable": "MaTable", "columns": ["Colonne1", "Colonne2"],
+                        "dynamicFilter": true, "dynamicFilterColumn": "id", "footerFunc": "sum" } }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Réglages ajoutés pour suivre la ligne active de Grist et regrouper des lignes :
+- Tableau et graphique : `dynamicFilter` (true) avec `dynamicFilterColumn` (colonne de la table source) et `dynamicSourceColumn` (champ de la ligne active comparé à cette colonne ; `id` désigne le numéro de la ligne). Exemple : une table d'étages qui a une colonne `Batiment` pointant vers la table des bâtiments, dont une ligne est active : `dynamicFilterColumn: "Batiment"` et `dynamicSourceColumn: "id"`. Sans `dynamicSourceColumn`, la colonne de même nom de la ligne active est utilisée (anciennes mises en page). Tant qu'aucune ligne n'est active, le bloc reste vide.
+- Tableau : `groupBy` (colonne dont les valeurs identiques deviennent une seule ligne) et `groupFunc` (`sum`, `avg`, `min`, `max` ou `count`, pour les autres colonnes). Une colonne peut avoir sa propre fonction : `{ "id": "id", "label": "Nombre", "func": "count" }` donne le nombre de lignes du groupe. Le total du bas additionne les lignes regroupées.
+- Graphique : `groupFunc` regroupe les lignes qui ont la même valeur dans la colonne X (`xColumn`).
+- Colonne de tableau : `format` vaut `date` (date Grist affichée JJ/MM/AAAA) ou `plain` (nombre sans séparateur de milliers, utile pour une année).
+- Image : la cellule peut contenir plusieurs adresses, une par ligne ; la première ligne est la première image (`imageIndex` choisit une autre). `captionColumn` désigne une colonne dont la ligne de même rang donne la légende.
+
+Dans `columns`, une colonne peut s'écrire simplement par son identifiant, ou `{ "id": "...", "label": "..." }` pour changer son titre. Formats de page : `A3`, `A4`, `A5`, `screen`, `square`, `custom`.
+
+Tests : `npm test` vérifie la lecture et le contrôle du JSON ainsi que le regroupement. Après `npm run build`, `node tests/e2e-io.mjs` vérifie la fenêtre d'export et d'import, et `node tests/e2e-blocks.mjs` vérifie les blocs avec un Grist simulé, dans un navigateur (variable `PLAYWRIGHT_PATH` pour indiquer l'emplacement de Playwright).
+
 ## 🛠️ Développement local
 
 ```bash
