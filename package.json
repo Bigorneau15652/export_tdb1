@@ -8,7 +8,7 @@
     "build": "webpack --mode production",
     "watch": "webpack --mode development --watch",
     "deploy": "npm run build && gh-pages -d dist",
-    "test": "node --test tests/config-io.test.mjs tests/grouping.test.mjs"
+    "test": "node --test tests/config-io.test.mjs tests/grouping.test.mjs tests/move-block.test.mjs"
   },
   "keywords": [
     "grist",

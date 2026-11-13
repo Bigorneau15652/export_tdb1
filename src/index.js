@@ -159,8 +159,27 @@ async function renderPage(page, pageIndex) {
   }
 }
 
+// A block that was moved to another page is drawn again in that page: its element in the old
+// page is removed first, with its renderer and its drag settings.
+function removeMovedBlocks() {
+  for (const blockEl of Array.from(pagesContainer.querySelectorAll('.dc-block'))) {
+    const blockId = blockEl.dataset.blockId;
+    const page = store.findBlockPage(blockId);
+    const drawnIn = blockEl.closest('.dc-page');
+    if (!page || !drawnIn || drawnIn.dataset.pageId === page.id) continue;
+    if (blockManager) blockManager.unregisterBlock(blockId);
+    const renderer = blockRenderers.get(blockId);
+    if (renderer) {
+      renderer.destroy();
+      blockRenderers.delete(blockId);
+    }
+    blockEl.remove();
+  }
+}
+
 async function renderAll() {
   if (!pagesContainer) return;
+  removeMovedBlocks();
   for (let i = 0; i < store.config.pages.length; i++) {
     await renderPage(store.config.pages[i], i);
   }
