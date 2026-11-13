@@ -20,6 +20,39 @@ Widget Grist générique — Compositeur universel de tableaux de bord imprimabl
 3. Collez l'URL : `https://bigorneau15652.github.io/export_tdb1/`
 4. Accordez l'accès **full** au document
 
+## Export et import de la mise en page
+
+Le bouton « Exporter / Importer » de la barre d'outils ouvre une fenêtre. « Exporter » affiche la mise en page actuelle (format de page, pages, blocs avec leur position, leur taille et leurs réglages) sous forme de texte JSON, que l'on peut copier ou télécharger. Les données des tables ne sont pas exportées. Pour importer, collez un texte JSON ou choisissez un fichier, cliquez sur « Vérifier l'import » (un compte rendu indique ce qui a été corrigé ou ignoré), puis sur « Remplacer la mise en page actuelle ». Exportez l'ancienne mise en page avant si vous voulez la garder.
+
+Le texte commence par un en-tête `format` (toujours `grist-dashboard-composer`) et `version` (actuellement 1). Chaque bloc a un `type` (`text`, `table`, `chart` ou `image`), une position `x` et `y` et une taille `width` et `height` en pixels de page, et un objet `config` dont les champs sont ceux de la fenêtre de réglage du bloc. L'import contrôle chaque champ : un type inconnu, un champ inconnu, un identifiant non conforme ou une valeur hors limites sont écartés ou remplacés, jamais exécutés. Exemple minimal :
+
+```json
+{
+  "format": "grist-dashboard-composer",
+  "version": 1,
+  "config": {
+    "pageFormat": "A4",
+    "pageOrientation": "landscape",
+    "pages": [
+      {
+        "id": "page-1",
+        "blocks": [
+          { "id": "titre", "type": "text", "x": 40, "y": 40, "width": 600, "height": 60,
+            "config": { "markdown": "# Titre" } },
+          { "id": "liste", "type": "table", "x": 40, "y": 120, "width": 600, "height": 250,
+            "config": { "sourceTable": "MaTable", "columns": ["Colonne1", "Colonne2"],
+                        "dynamicFilter": true, "dynamicFilterColumn": "id", "footerFunc": "sum" } }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Dans `columns`, une colonne peut s'écrire simplement par son identifiant, ou `{ "id": "...", "label": "..." }` pour changer son titre. Formats de page : `A3`, `A4`, `A5`, `screen`, `square`, `custom`.
+
+Tests : `npm test` vérifie la lecture et le contrôle du JSON. Après `npm run build`, `node tests/e2e-io.mjs` vérifie la fenêtre dans un navigateur (variable `PLAYWRIGHT_PATH` pour indiquer l'emplacement de Playwright).
+
 ## 🛠️ Développement local
 
 ```bash

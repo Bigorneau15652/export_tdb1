@@ -8,9 +8,15 @@
     "build": "webpack --mode production",
     "watch": "webpack --mode development --watch",
     "deploy": "npm run build && gh-pages -d dist",
-    "test": "echo \"No tests yet\" && exit 0"
+    "test": "node --test tests/config-io.test.mjs"
   },
-  "keywords": ["grist", "widget", "dashboard", "pdf", "composer"],
+  "keywords": [
+    "grist",
+    "widget",
+    "dashboard",
+    "pdf",
+    "composer"
+  ],
   "author": "Holweck",
   "license": "Apache-2.0",
   "devDependencies": {

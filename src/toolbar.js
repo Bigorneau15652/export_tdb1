@@ -1,4 +1,5 @@
 import { createEl } from './utils.js';
+import { openConfigDialog } from './config-dialog.js';
 
 const BLOCK_TYPES = [
   { type: 'text', icon: 'T', label: 'Texte' },
@@ -84,9 +85,16 @@ export function createToolbar(store, callbacks) {
     store.addPage();
   });
 
+  const ioBtn = createEl('button', 'dc-btn', 'Exporter / Importer');
+  ioBtn.title = 'Exporter la mise en page en JSON ou en importer une';
+  ioBtn.addEventListener('click', () => {
+    openConfigDialog(store, { onApplied: () => { if (callbacks.onFormatChange) callbacks.onFormatChange(); } });
+  });
+
   rightGroup.appendChild(editBtn);
   rightGroup.appendChild(previewBtn);
   rightGroup.appendChild(addPageBtn);
+  rightGroup.appendChild(ioBtn);
   rightGroup.appendChild(printBtn);
 
   toolbar.appendChild(rightGroup);
@@ -95,6 +103,9 @@ export function createToolbar(store, callbacks) {
     editBtn.classList.toggle('dc-btn-active', state.editMode);
     previewBtn.classList.toggle('dc-btn-active', state.previewMode);
     toolbar.classList.toggle('dc-hidden', state.previewMode);
+    // An import can change the format: the controls follow the layout.
+    formatSelect.value = state.config.pageFormat;
+    orientBtn.textContent = state.config.pageOrientation === 'portrait' ? '▯' : '▭';
   });
 
   return toolbar;
