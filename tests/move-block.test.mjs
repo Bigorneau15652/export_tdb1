@@ -1,52 +1,67 @@
-// Checks of the move of a block to another page (the logic of the store, without a page).
+// Checks of the drop of a block on a page, the same one or another: its place is kept when it is
+// free, otherwise the nearest free place is taken (the logic of the store, without a page).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { store } from '../src/store.js';
+import { rectsOverlap } from '../src/utils.js';
+
+const block = (id, x, y, width = 200, height = 100) => ({ id, type: `text`, x, y, width, height, config: {} });
 
 function setup() {
   store.config = {
     pageFormat: `A4`, pageOrientation: `landscape`,
     pages: [
-      { id: `p1`, blocks: [
-        { id: `a`, type: `text`, x: 100, y: 100, width: 200, height: 100, config: {} },
-        { id: `b`, type: `text`, x: 400, y: 100, width: 200, height: 100, config: {} }
-      ] },
-      { id: `p2`, blocks: [{ id: `c`, type: `text`, x: 100, y: 100, width: 300, height: 150, config: {} }] }
+      { id: `p1`, blocks: [block(`a`, 100, 100), block(`b`, 400, 100)] },
+      { id: `p2`, blocks: [block(`c`, 100, 100, 300, 150)] }
     ]
   };
   store.saveDebounced = () => {};
 }
 
-test(`a block moves to the other page and keeps its place when it is free`, () => {
+const find = (id) => store.config.pages.flatMap((p) => p.blocks).find((b) => b.id === id);
+const overlapsAny = (page) => page.blocks.some((x, i) => page.blocks.some((y, j) => i < j && rectsOverlap(x, y)));
+
+test(`a block dropped on a free place of another page goes there, at that place`, () => {
   setup();
-  assert.equal(store.moveBlockToPage(`b`, `p2`), true);
+  assert.equal(store.dropBlock(`b`, `p2`, { x: 600, y: 300 }), true);
   assert.deepEqual(store.config.pages[0].blocks.map((b) => b.id), [`a`]);
-  const moved = store.config.pages[1].blocks.find((b) => b.id === `b`);
-  assert.deepEqual([moved.x, moved.y], [400, 100]);
+  assert.deepEqual([find(`b`).x, find(`b`).y], [600, 300]);
   assert.equal(store.findBlockPage(`b`).id, `p2`);
 });
 
-test(`a block that would overlap another takes a free place`, () => {
+test(`a block dropped on another block takes the nearest free place`, () => {
   setup();
-  store.moveBlockToPage(`a`, `p2`);
-  const moved = store.config.pages[1].blocks.find((b) => b.id === `a`);
-  const other = store.config.pages[1].blocks.find((b) => b.id === `c`);
-  const overlap = !(moved.x + moved.width <= other.x || other.x + other.width <= moved.x || moved.y + moved.height <= other.y || other.y + other.height <= moved.y);
-  assert.equal(overlap, false);
+  store.dropBlock(`a`, `p2`, { x: 150, y: 120 });
+  assert.equal(store.findBlockPage(`a`).id, `p2`);
+  assert.equal(overlapsAny(store.config.pages[1]), false);
+  const moved = find(`a`);
+  assert.ok(Math.hypot(moved.x - 150, moved.y - 120) < 300, `the shift stays small: ${moved.x}, ${moved.y}`);
 });
 
-test(`moving to the same page, to an unknown page or an unknown block changes nothing`, () => {
+test(`a block dropped on another block of its own page is shifted too`, () => {
   setup();
-  assert.equal(store.moveBlockToPage(`a`, `p1`), false);
-  assert.equal(store.moveBlockToPage(`a`, `nope`), false);
-  assert.equal(store.moveBlockToPage(`nope`, `p2`), false);
-  assert.equal(store.config.pages[0].blocks.length, 2);
-  assert.equal(store.config.pages[1].blocks.length, 1);
+  store.dropBlock(`a`, `p1`, { x: 390, y: 110 });
+  assert.equal(store.findBlockPage(`a`).id, `p1`);
+  assert.equal(overlapsAny(store.config.pages[0]), false);
 });
 
-test(`a block can go back to the first page`, () => {
+test(`a block dropped partly outside the page is brought back inside`, () => {
   setup();
-  store.moveBlockToPage(`c`, `p1`);
-  assert.deepEqual(store.config.pages[1].blocks, []);
-  assert.equal(store.config.pages[0].blocks.length, 3);
+  store.dropBlock(`a`, `p2`, { x: -50, y: 5000 });
+  const moved = find(`a`);
+  assert.ok(moved.x >= 0 && moved.y >= 0 && moved.y + moved.height <= 794);
+});
+
+test(`a drop that changes nothing, on an unknown page or for an unknown block, is refused`, () => {
+  setup();
+  assert.equal(store.dropBlock(`a`, `p1`, { x: 100, y: 100 }), false);
+  assert.equal(store.dropBlock(`a`, `nope`, { x: 0, y: 0 }), false);
+  assert.equal(store.dropBlock(`nope`, `p1`, { x: 0, y: 0 }), false);
+});
+
+test(`when the page has no room the block stays where it was dropped`, () => {
+  setup();
+  store.config.pages[1].blocks = [block(`wall`, 0, 0, 1123, 794)];
+  assert.equal(store.dropBlock(`a`, `p2`, { x: 300, y: 300 }), true);
+  assert.equal(store.findBlockPage(`a`).id, `p2`);
 });

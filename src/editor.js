@@ -43,20 +43,6 @@ export function createEditorPanel(block, store, onClose) {
   panel.appendChild(typeLabel);
   panel.appendChild(typeSelect);
 
-  // The page of the block: choosing another one moves the block there.
-  const pageLabel = createEl('label', 'dc-label', 'Page du bloc');
-  const pageSelect = createEl('select', 'dc-select dc-select-full');
-  store.config.pages.forEach((page, index) => {
-    const opt = createEl('option', '', `Page ${index + 1}`);
-    opt.value = page.id;
-    pageSelect.appendChild(opt);
-  });
-  const currentPage = store.findBlockPage(block.id);
-  if (currentPage) pageSelect.value = currentPage.id;
-  pageSelect.addEventListener('change', () => store.moveBlockToPage(block.id, pageSelect.value));
-  panel.appendChild(pageLabel);
-  panel.appendChild(pageSelect);
-
   const configContainer = createEl('div', 'dc-editor-config');
   panel.appendChild(configContainer);
 

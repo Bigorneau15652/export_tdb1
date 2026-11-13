@@ -42,6 +42,41 @@ class PageManager {
     return { x: margin, y: margin };
   }
 
+  // The free place nearest to the place where a block was dropped: the same place when it is
+  // free, otherwise the closest one (every 10 pixels) where it overlaps no other block of the
+  // page. Returns { x, y, free }; free is false when the page has no room for the block (the
+  // block then stays where it was dropped).
+  findNearestFreePosition(pageId, x, y, width, height, excludeBlockId = null) {
+    const page = this.store.config.pages.find(p => p.id === pageId);
+    const dims = this.store.getPageDimensions();
+    const maxX = Math.max(0, dims.width - width);
+    const maxY = Math.max(0, dims.height - height);
+    const wanted = { x: clamp(Math.round(x), 0, maxX), y: clamp(Math.round(y), 0, maxY) };
+    const others = (page ? page.blocks : []).filter(b => b.id !== excludeBlockId);
+    const overlaps = (cx, cy) => others.some(b =>
+      rectsOverlap({ x: cx, y: cy, width, height }, { x: b.x, y: b.y, width: b.width, height: b.height })
+    );
+    if (!overlaps(wanted.x, wanted.y)) return { ...wanted, free: true };
+
+    let best = null;
+    let bestDistance = Infinity;
+    const STEP = 10;
+    const tryPlace = (cx, cy) => {
+      const distance = (cx - wanted.x) ** 2 + (cy - wanted.y) ** 2;
+      if (distance < bestDistance && !overlaps(cx, cy)) {
+        best = { x: cx, y: cy };
+        bestDistance = distance;
+      }
+    };
+    for (let cy = 0; cy <= maxY; cy += STEP) {
+      for (let cx = 0; cx <= maxX; cx += STEP) tryPlace(cx, cy);
+      tryPlace(maxX, cy);
+    }
+    for (let cx = 0; cx <= maxX; cx += STEP) tryPlace(cx, maxY);
+    tryPlace(maxX, maxY);
+    return best ? { ...best, free: true } : { ...wanted, free: false };
+  }
+
   checkCollision(blockId, x, y, width, height) {
     const page = this.store.findBlockPage(blockId);
     if (!page) return null;

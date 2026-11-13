@@ -238,16 +238,11 @@ body {
 }
 
 .dc-block-toolbar {
-  /* Inside the block: the block hides what lies outside of it, so a toolbar placed above it
-     could never be seen or clicked. */
   position: absolute;
-  top: 2px;
-  right: 2px;
+  top: -28px;
+  right: 0;
   display: flex;
   gap: 4px;
-  padding: 2px;
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.92);
   opacity: 0;
   transition: opacity 0.15s;
   z-index: 10;
@@ -259,7 +254,6 @@ body {
 }
 
 .dc-block-edit-btn,
-.dc-block-page-btn,
 .dc-block-delete-btn {
   width: 24px;
   height: 24px;
@@ -608,3 +602,9 @@ body {
 .dc-io-info { background: #e6f0ff; color: #0b2a5b; border-color: #8fb2ee; }
 .dc-io-warning { background: #fff1cc; color: #4d3500; border-color: #e0b34a; }
 .dc-io-error { background: #fde3e3; color: #6b0d0d; border-color: #e08f8f; }
+
+
+/* While a block is carried, the pages do not cut it: it can be seen over the other pages. */
+.dc-pages-container.dc-is-dragging .dc-page {
+  overflow: visible;
+}
