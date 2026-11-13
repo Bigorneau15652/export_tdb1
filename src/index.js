@@ -49,8 +49,26 @@ async function renderBlock(block, pageEl) {
     editBtn.title = 'Éditer (clic) ou double-clic sur le bloc';
     const deleteBtn = createEl('button', 'dc-block-delete-btn', '✕');
     deleteBtn.title = 'Supprimer';
+    const upBtn = createEl('button', 'dc-block-page-btn dc-block-up-btn', '↑');
+    upBtn.title = 'Déplacer ce bloc vers la page précédente';
+    const downBtn = createEl('button', 'dc-block-page-btn dc-block-down-btn', '↓');
+    downBtn.title = 'Déplacer ce bloc vers la page suivante';
+    toolbar.appendChild(upBtn);
+    toolbar.appendChild(downBtn);
     toolbar.appendChild(editBtn);
     toolbar.appendChild(deleteBtn);
+
+    // Moves the block one page up or down; the page of the block is read when the button is
+    // clicked, because the block can already have moved.
+    const moveBy = (step) => (e) => {
+      e.stopPropagation();
+      const pages = store.config.pages;
+      const current = pages.findIndex(p => p.blocks.some(b => b.id === block.id));
+      const target = pages[current + step];
+      if (current >= 0 && target) store.moveBlockToPage(block.id, target.id);
+    };
+    upBtn.addEventListener('click', moveBy(-1));
+    downBtn.addEventListener('click', moveBy(1));
     blockEl.appendChild(toolbar);
 
     const resizeHandle = createEl('div', 'dc-block-resize-handle');
@@ -159,8 +177,27 @@ async function renderPage(page, pageIndex) {
   }
 }
 
+// A block that was moved to another page is drawn again in that page: its element in the old
+// page is removed first, with its renderer and its drag settings.
+function removeMovedBlocks() {
+  for (const blockEl of Array.from(pagesContainer.querySelectorAll('.dc-block'))) {
+    const blockId = blockEl.dataset.blockId;
+    const page = store.findBlockPage(blockId);
+    const drawnIn = blockEl.closest('.dc-page');
+    if (!page || !drawnIn || drawnIn.dataset.pageId === page.id) continue;
+    if (blockManager) blockManager.unregisterBlock(blockId);
+    const renderer = blockRenderers.get(blockId);
+    if (renderer) {
+      renderer.destroy();
+      blockRenderers.delete(blockId);
+    }
+    blockEl.remove();
+  }
+}
+
 async function renderAll() {
   if (!pagesContainer) return;
+  removeMovedBlocks();
   for (let i = 0; i < store.config.pages.length; i++) {
     await renderPage(store.config.pages[i], i);
   }

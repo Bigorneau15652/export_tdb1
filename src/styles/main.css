@@ -238,11 +238,16 @@ body {
 }
 
 .dc-block-toolbar {
+  /* Inside the block: the block hides what lies outside of it, so a toolbar placed above it
+     could never be seen or clicked. */
   position: absolute;
-  top: -28px;
-  right: 0;
+  top: 2px;
+  right: 2px;
   display: flex;
   gap: 4px;
+  padding: 2px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.92);
   opacity: 0;
   transition: opacity 0.15s;
   z-index: 10;
@@ -254,6 +259,7 @@ body {
 }
 
 .dc-block-edit-btn,
+.dc-block-page-btn,
 .dc-block-delete-btn {
   width: 24px;
   height: 24px;

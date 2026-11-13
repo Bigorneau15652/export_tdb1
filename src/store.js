@@ -1,4 +1,5 @@
-import { deepClone, generateId, debounce } from './utils.js';
+import { deepClone, generateId, debounce, rectsOverlap, clamp } from './utils.js';
+import { PageManager } from './page-manager.js';
 import { setOption, getOptions } from './grist-api.js';
 import { PAGE_FORMATS, getPageDimensions } from './page-formats.js';
 import { buildExport, parseImport } from './config-io.js';
@@ -262,6 +263,29 @@ class Store {
         return;
       }
     }
+  }
+
+  // Moves a block to another page. It keeps its place when that place is free on the new page,
+  // otherwise it takes the first free place. Returns true when the block was moved.
+  moveBlockToPage(blockId, targetPageId) {
+    const from = this.findBlockPage(blockId);
+    const to = this.config.pages.find(p => p.id === targetPageId);
+    if (!from || !to || from === to) return false;
+    const block = from.blocks.find(b => b.id === blockId);
+    const dims = this.getPageDimensions();
+    block.width = Math.min(block.width, dims.width);
+    block.height = Math.min(block.height, dims.height);
+    const x = clamp(block.x, 0, dims.width - block.width);
+    const y = clamp(block.y, 0, dims.height - block.height);
+    const free = !to.blocks.some(other => rectsOverlap({ x, y, width: block.width, height: block.height }, other));
+    const place = free ? { x, y } : new PageManager(this).findFreePosition(to.id, block.width, block.height);
+    block.x = Math.round(place.x);
+    block.y = Math.round(place.y);
+    from.blocks.splice(from.blocks.indexOf(block), 1);
+    to.blocks.push(block);
+    this.notify();
+    this.saveDebounced();
+    return true;
   }
 
   moveBlock(blockId, x, y) {

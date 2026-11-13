@@ -20,6 +20,10 @@ Widget Grist générique — Compositeur universel de tableaux de bord imprimabl
 3. Collez l'URL : `https://bigorneau15652.github.io/export_tdb1/`
 4. Accordez l'accès **full** au document
 
+## Changer un bloc de page
+
+En mode « Éditer », survolez un bloc : une petite barre apparaît en haut à droite avec les boutons « ↑ » (page précédente), « ↓ » (page suivante), le crayon (réglages) et la croix (supprimer). Le bloc garde sa position s'il y a de la place à cet endroit sur l'autre page, sinon il prend la première place libre. La fenêtre de réglages du bloc (crayon ou double clic) a aussi une liste « Page du bloc » pour choisir directement la page.
+
 ## Export et import de la mise en page
 
 Le bouton « Exporter / Importer » de la barre d'outils ouvre une fenêtre. « Exporter » affiche la mise en page actuelle (format de page, pages, blocs avec leur position, leur taille et leurs réglages) sous forme de texte JSON, que l'on peut copier ou télécharger. Les données des tables ne sont pas exportées. Pour importer, collez un texte JSON ou choisissez un fichier, cliquez sur « Vérifier l'import » (un compte rendu indique ce qui a été corrigé ou ignoré), puis sur « Remplacer la mise en page actuelle ». Exportez l'ancienne mise en page avant si vous voulez la garder.
@@ -58,7 +62,7 @@ Réglages ajoutés pour suivre la ligne active de Grist et regrouper des lignes 
 
 Dans `columns`, une colonne peut s'écrire simplement par son identifiant, ou `{ "id": "...", "label": "..." }` pour changer son titre. Formats de page : `A3`, `A4`, `A5`, `screen`, `square`, `custom`.
 
-Tests : `npm test` vérifie la lecture et le contrôle du JSON ainsi que le regroupement. Après `npm run build`, `node tests/e2e-io.mjs` vérifie la fenêtre d'export et d'import, et `node tests/e2e-blocks.mjs` vérifie les blocs avec un Grist simulé, dans un navigateur (variable `PLAYWRIGHT_PATH` pour indiquer l'emplacement de Playwright).
+Tests : `npm test` vérifie la lecture et le contrôle du JSON ainsi que le regroupement. Après `npm run build`, `node tests/e2e-io.mjs` vérifie la fenêtre d'export et d'import, et `node tests/e2e-blocks.mjs` vérifie les blocs avec un Grist simulé, `node tests/e2e-move.mjs` vérifie le changement de page d'un bloc, dans un navigateur (variable `PLAYWRIGHT_PATH` pour indiquer l'emplacement de Playwright).
 
 ## 🛠️ Développement local
 
